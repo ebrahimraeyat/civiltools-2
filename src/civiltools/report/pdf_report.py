@@ -16,7 +16,7 @@ import matplotlib
 from fpdf import FPDF
 
 from civiltools.report.report_config import ReportConfig
-from civiltools.report.strings import get_string
+from civiltools.report.strings import get_string, ASCE7_IRREGULARITY_DESC
 from civiltools.report.data_extractor import ReportData
 
 
@@ -457,12 +457,23 @@ def _sec_model_settings(pdf: EnglishPDF, data: ReportData, lang: str):
 
 
 def _pdf_checkbox_table(pdf: EnglishPDF, items: list[tuple[str, bool]]):
-    """Render a checkbox list in the PDF."""
+    """Render a checkbox list with ASCE 7-16 descriptions for detected irregularities."""
     rows = []
     for label, checked in items:
         mark = "\u2713" if checked else "\u2610"
         rows.append([f"{mark}  {label}"])
     pdf.add_data_table(["Irregularity Check"], rows)
+
+    # Add ASCE 7-16 penalty descriptions for each detected irregularity
+    detected = [label for label, checked in items if checked]
+    if detected:
+        pdf.ln(2)
+        pdf.add_heading("ASCE 7-16 Irregularity Descriptions", 4)
+        for label in detected:
+            desc = ASCE7_IRREGULARITY_DESC.get(label)
+            if desc:
+                pdf.add_paragraph(f"{label}:", bold=True)
+                pdf.add_paragraph(desc)
 
 
 def _sec_project_info(pdf: EnglishPDF, data: ReportData, lang: str):

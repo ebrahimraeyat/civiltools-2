@@ -39,6 +39,7 @@ dev = [
     "nuitka>=2.0",
     "pyinstaller>=6.0",
     "ruff>=0.3",
+    "markitdown[all]>=0.1",
 ]
 
 [project.scripts]

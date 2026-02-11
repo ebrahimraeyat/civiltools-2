@@ -19,7 +19,7 @@ from docx.shared import Pt, Inches, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from civiltools.report.report_config import ReportConfig
-from civiltools.report.strings import get_string
+from civiltools.report.strings import get_string, ASCE7_IRREGULARITY_DESC
 from civiltools.report.data_extractor import ReportData
 
 
@@ -382,13 +382,26 @@ def _section_model_settings(doc: Document, data: ReportData, lang: str):
 
 
 def _add_checkbox_table(doc: Document, items: list[tuple[str, bool]]):
-    """Render a checkbox list as a table."""
+    """Render a checkbox list with ASCE 7-16 descriptions for detected irregularities."""
     table = doc.add_table(rows=len(items), cols=1)
     table.style = "Light Shading Accent 1"
     for i, (label, checked) in enumerate(items):
         mark = "\u2713" if checked else "\u2610"
         table.cell(i, 0).text = f"{mark}  {label}"
     doc.add_paragraph()
+
+    # Add ASCE 7-16 penalty descriptions for each detected irregularity
+    detected = [label for label, checked in items if checked]
+    if detected:
+        doc.add_heading("ASCE 7-16 Irregularity Descriptions", level=4)
+        for label in detected:
+            desc = ASCE7_IRREGULARITY_DESC.get(label)
+            if desc:
+                p = doc.add_paragraph()
+                run = p.add_run(f"{label}: ")
+                run.bold = True
+                p.add_run(desc)
+        doc.add_paragraph()
 
 
 def _section_project_info(doc: Document, data: ReportData, lang: str):

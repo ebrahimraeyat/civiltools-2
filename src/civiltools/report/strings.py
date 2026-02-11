@@ -169,6 +169,165 @@ _STRINGS: dict[str, dict[str, str]] = {
 # Access helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ASCE 7-16 irregularity descriptions (Tables 12.3-1 & 12.3-2)
+# ═══════════════════════════════════════════════════════════════════════════
+
+ASCE7_IRREGULARITY_DESC: dict[str, str] = {
+    # ── Horizontal (Plan) Irregularities — Table 12.3-1 ───────────────
+    "Torsional Irregularity": (
+        "Type 1a — Torsional irregularity is defined to exist where the maximum story "
+        "drift, computed including accidental torsion with Ax = 1.0, at one end of the "
+        "structure transverse to an axis is more than 1.2 times the average of the story "
+        "drifts at the two ends of the structure. This requirement applies only to "
+        "structures with rigid or semirigid diaphragms.\n"
+        "Penalties: (1) For SDC C through F, the accidental torsional moment Mta shall "
+        "be amplified by Ax = (delta_max / 1.2 * delta_avg)^2, per Sec. 12.8.4.3. "
+        "(2) For SDC D, E, and F, diaphragm connection forces and collector forces "
+        "shall be increased by 25% per Sec. 12.3.3.4. "
+        "(3) For SDC B through F, a 3-D structural model is required per Sec. 12.7.3. "
+        "(4) For SDC C through F, story drift shall be computed as the largest difference "
+        "of the deflections along any of the edges of the structure per Sec. 12.12.1.\n"
+        "(Ref: ASCE 7-16, Table 12.3-1, Type 1a)"
+    ),
+    "Extreme Torsional Irregularity": (
+        "Type 1b — Extreme torsional irregularity is defined to exist where the maximum "
+        "story drift, computed including accidental torsion with Ax = 1.0, at one end of "
+        "the structure transverse to an axis is more than 1.4 times the average of the "
+        "story drifts at the two ends of the structure. This requirement applies only to "
+        "structures with rigid or semirigid diaphragms.\n"
+        "Penalties: (1) PROHIBITED for structures assigned to SDC E or F (Sec. 12.3.3.1). "
+        "(2) For SDC D, the redundancy factor rho shall be taken as 1.3 and no reduction "
+        "is permitted (Sec. 12.3.4.2). "
+        "(3) Accidental torsional moment amplification Ax applies per Sec. 12.8.4.3. "
+        "(4) Diaphragm connection and collector forces increased by 25% for SDC D-F "
+        "(Sec. 12.3.3.4). "
+        "(5) 3-D model required (Sec. 12.7.3). "
+        "(6) Drift computed at building edges (Sec. 12.12.1).\n"
+        "(Ref: ASCE 7-16, Table 12.3-1, Type 1b)"
+    ),
+    "Re-entrant Corner": (
+        "Type 2 — Re-entrant corner irregularity is defined to exist where both plan "
+        "projections of the structure beyond a re-entrant corner are greater than 15% of "
+        "the plan dimension of the structure in the given direction.\n"
+        "Penalties: For SDC D, E, and F, diaphragm connection forces and collector "
+        "forces shall be increased by 25% per Sec. 12.3.3.4.\n"
+        "(Ref: ASCE 7-16, Table 12.3-1, Type 2)"
+    ),
+    "Diaphragm Discontinuity": (
+        "Type 3 — Diaphragm discontinuity irregularity is defined to exist where there is "
+        "a diaphragm with an abrupt discontinuity or variation in stiffness, including one "
+        "that has a cutout or open area greater than 50% of the gross enclosed diaphragm "
+        "area, or a change in effective diaphragm stiffness of more than 50% from one "
+        "story to the next.\n"
+        "Penalties: For SDC D, E, and F, diaphragm connection forces and collector "
+        "forces shall be increased by 25% per Sec. 12.3.3.4.\n"
+        "(Ref: ASCE 7-16, Table 12.3-1, Type 3)"
+    ),
+    "Out-of-Plane Offset": (
+        "Type 4 — Out-of-plane offset irregularity is defined to exist where there is a "
+        "discontinuity in a lateral force-resistance path, such as an out-of-plane offset "
+        "of at least one of the vertical elements.\n"
+        "Penalties: (1) For SDC D, E, and F, diaphragm connection forces and collector "
+        "forces shall be increased by 25% per Sec. 12.3.3.4. "
+        "(2) Structural elements supporting discontinuous walls or frames shall be "
+        "designed for seismic load effects including overstrength (Omega_0) per "
+        "Sec. 12.3.3.3 and 12.4.3. "
+        "(3) A 3-D model is required per Sec. 12.7.3.\n"
+        "(Ref: ASCE 7-16, Table 12.3-1, Type 4)"
+    ),
+    "Non-Parallel System": (
+        "Type 5 — Nonparallel system irregularity is defined to exist where vertical "
+        "lateral force-resisting elements are not parallel to the major orthogonal axes "
+        "of the seismic force-resisting system.\n"
+        "Penalties: (1) For SDC C through F, the orthogonal combination procedure of "
+        "Sec. 12.5.3 is required (100%-30% rule). "
+        "(2) A 3-D model is required per Sec. 12.7.3.\n"
+        "(Ref: ASCE 7-16, Table 12.3-1, Type 5)"
+    ),
+
+    # ── Vertical Irregularities — Table 12.3-2 ───────────────────────
+    "Soft Story": (
+        "Type 1a — Stiffness-soft story irregularity is defined to exist where there is a "
+        "story in which the lateral stiffness is less than 70% of that in the story above "
+        "or less than 80% of the average stiffness of the three stories above.\n"
+        "Penalties: (1) For SDC D, E, and F, the Equivalent Lateral Force (ELF) procedure "
+        "of Sec. 12.8 alone is not permitted; dynamic analysis per Table 12.6-1 is "
+        "required. "
+        "(2) Exception: This irregularity need not be considered if no story drift ratio "
+        "exceeds 130% of the drift ratio of the story above (Sec. 12.3.2.2 Exception 1), "
+        "or for one-story buildings in any SDC and two-story buildings in SDC B, C, or D "
+        "(Exception 2).\n"
+        "(Ref: ASCE 7-16, Table 12.3-2, Type 1a)"
+    ),
+    "Extreme Soft Story": (
+        "Type 1b — Stiffness-extreme soft story irregularity is defined to exist where "
+        "there is a story in which the lateral stiffness is less than 60% of that in the "
+        "story above or less than 70% of the average stiffness of the three stories above.\n"
+        "Penalties: (1) PROHIBITED for structures assigned to SDC E or F (Sec. 12.3.3.1). "
+        "(2) For SDC D, E, and F, dynamic analysis is required per Table 12.6-1; the ELF "
+        "procedure alone is not permitted. "
+        "(3) Same exceptions as Type 1a regarding drift ratio and low-rise buildings.\n"
+        "(Ref: ASCE 7-16, Table 12.3-2, Type 1b)"
+    ),
+    "Weight (Mass) Irregularity": (
+        "Type 2 — Weight (mass) irregularity is defined to exist where the effective mass "
+        "of any story is more than 150% of the effective mass of an adjacent story. A roof "
+        "that is lighter than the floor below need not be considered.\n"
+        "Penalties: (1) For SDC D, E, and F, the ELF procedure alone is not permitted; "
+        "dynamic analysis per Table 12.6-1 is required. "
+        "(2) Exception: This irregularity need not be considered if no story drift ratio "
+        "exceeds 130% of the drift ratio of the story above (Sec. 12.3.2.2 Exception 1), "
+        "or for one-story buildings in any SDC and two-story buildings in SDC B, C, or D "
+        "(Exception 2).\n"
+        "(Ref: ASCE 7-16, Table 12.3-2, Type 2)"
+    ),
+    "Geometric Irregularity": (
+        "Type 3 — Vertical geometric irregularity is defined to exist where the horizontal "
+        "dimension of the seismic force-resisting system in any story is more than 130% of "
+        "that in an adjacent story.\n"
+        "Penalties: For SDC D, E, and F, the ELF procedure alone is not permitted; "
+        "dynamic analysis per Table 12.6-1 is required.\n"
+        "(Ref: ASCE 7-16, Table 12.3-2, Type 3)"
+    ),
+    "In-Plane Discontinuity": (
+        "Type 4 — In-plane discontinuity in vertical lateral force-resisting element "
+        "irregularity is defined to exist where there is an in-plane offset of a vertical "
+        "seismic force-resisting element resulting in overturning demands on supporting "
+        "structural elements.\n"
+        "Penalties: (1) Structural elements supporting the discontinuous wall or frame "
+        "shall be designed for seismic load effects including overstrength (Omega_0) per "
+        "Sec. 12.3.3.3 and 12.4.3. "
+        "(2) For SDC D, E, and F, diaphragm connection forces and collector forces shall "
+        "be increased by 25% per Sec. 12.3.3.4. "
+        "(3) For SDC D, E, and F, dynamic analysis is required per Table 12.6-1.\n"
+        "(Ref: ASCE 7-16, Table 12.3-2, Type 4)"
+    ),
+    "Weak Story": (
+        "Type 5a — Discontinuity in lateral strength-weak story irregularity is defined to "
+        "exist where the story lateral strength is less than 80% of that in the story "
+        "above. The story lateral strength is the total lateral strength of all seismic-"
+        "resisting elements sharing the story shear for the direction under consideration.\n"
+        "Penalties: (1) PROHIBITED for structures assigned to SDC E or F (Sec. 12.3.3.1), "
+        "unless the weak story can resist a total seismic force equal to Omega_0 times "
+        "the design force (Exception to 12.3.3.1). "
+        "(2) For SDC D, E, and F, dynamic analysis is required per Table 12.6-1.\n"
+        "(Ref: ASCE 7-16, Table 12.3-2, Type 5a)"
+    ),
+    "Extreme Weak Story": (
+        "Type 5b — Discontinuity in lateral strength-extreme weak story irregularity is "
+        "defined to exist where the story lateral strength is less than 65% of that in the "
+        "story above.\n"
+        "Penalties: (1) PROHIBITED for structures assigned to SDC D, E, or F "
+        "(Sec. 12.3.3.1). "
+        "(2) For SDC B and C, structures with this irregularity shall not be more than "
+        "two stories or 30 ft (9 m) in height (Sec. 12.3.3.2). "
+        "(3) For SDC D, E, and F, dynamic analysis is required per Table 12.6-1.\n"
+        "(Ref: ASCE 7-16, Table 12.3-2, Type 5b)"
+    ),
+}
+
+
 def get_string(key: str, lang: str = "fa") -> str:
     """Get a localized string by key and language."""
     entry = _STRINGS.get(key)
