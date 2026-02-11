@@ -1,0 +1,343 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>DefineAxesDialog</class>
+ <widget class="QDialog" name="DefineAxesDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>900</width>
+    <height>700</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Create Grid Lines from DXF / AutoCAD</string>
+  </property>
+  <layout class="QHBoxLayout" name="main_hlayout">
+   <!-- LEFT PANEL: Controls -->
+   <item>
+    <widget class="QWidget" name="left_panel">
+     <property name="maximumSize">
+      <size>
+       <width>380</width>
+       <height>16777215</height>
+      </size>
+     </property>
+     <layout class="QVBoxLayout" name="left_vlayout">
+      <!-- Source group -->
+      <item>
+       <widget class="QGroupBox" name="source_group">
+        <property name="title">
+         <string>Import Source</string>
+        </property>
+        <layout class="QVBoxLayout" name="source_vlayout">
+         <item>
+          <layout class="QHBoxLayout" name="source_hlayout">
+           <item>
+            <widget class="QRadioButton" name="radio_dxf_file">
+             <property name="text">
+              <string>DXF File</string>
+             </property>
+             <property name="checked">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QRadioButton" name="radio_autocad">
+             <property name="text">
+              <string>AutoCAD Selection</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="unit_hlayout">
+           <item>
+            <widget class="QLabel" name="label_unit">
+             <property name="text">
+              <string>Drawing Unit</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QComboBox" name="unit_combo">
+             <item>
+              <property name="text"><string>m</string></property>
+             </item>
+             <item>
+              <property name="text"><string>cm</string></property>
+             </item>
+             <item>
+              <property name="text"><string>mm</string></property>
+             </item>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="import_hlayout">
+           <item>
+            <widget class="QCheckBox" name="chk_blocks">
+             <property name="text"><string>Blocks</string></property>
+             <property name="checked"><bool>true</bool></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="chk_hatches">
+             <property name="text"><string>Hatches</string></property>
+             <property name="checked"><bool>true</bool></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="chk_lines">
+             <property name="text"><string>Lines</string></property>
+             <property name="checked"><bool>true</bool></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="chk_polylines">
+             <property name="text"><string>Polylines</string></property>
+             <property name="checked"><bool>true</bool></property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_import">
+           <property name="text">
+            <string>Import</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <!-- Column detection group -->
+      <item>
+       <widget class="QGroupBox" name="column_group">
+        <property name="title">
+         <string>Column Detection</string>
+        </property>
+        <layout class="QVBoxLayout" name="col_vlayout">
+         <item>
+          <layout class="QHBoxLayout" name="col_source_hlayout">
+           <item>
+            <widget class="QLabel" name="label_col_source">
+             <property name="text"><string>Source</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QComboBox" name="col_source_combo">
+             <item><property name="text"><string>All</string></property></item>
+             <item><property name="text"><string>Block</string></property></item>
+             <item><property name="text"><string>Hatch</string></property></item>
+             <item><property name="text"><string>Polyline</string></property></item>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="col_name_hlayout">
+           <item>
+            <widget class="QLabel" name="label_col_name">
+             <property name="text"><string>Name</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QComboBox" name="col_name_combo">
+             <item><property name="text"><string>(all)</string></property></item>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_detect_columns">
+           <property name="text">
+            <string>Detect Columns</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="label_selection_hint">
+           <property name="text">
+            <string>Click columns in the canvas to select/deselect.
+Shift+Click to add. Ctrl+Click to toggle.</string>
+           </property>
+           <property name="wordWrap">
+            <bool>true</bool>
+           </property>
+           <property name="styleSheet">
+            <string>color: #666; font-style: italic; font-size: 11px;</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_remove_selected">
+           <property name="text">
+            <string>Remove Selected Columns</string>
+           </property>
+           <property name="enabled">
+            <bool>false</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <!-- Axis creation group -->
+      <item>
+       <widget class="QGroupBox" name="axis_group">
+        <property name="title">
+         <string>Grid Axes</string>
+        </property>
+        <layout class="QVBoxLayout" name="axis_vlayout">
+         <item>
+          <layout class="QHBoxLayout" name="axis_style_hlayout">
+           <item>
+            <widget class="QLabel" name="label_x_style">
+             <property name="text"><string>X Axis Labels</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QComboBox" name="x_style_combo">
+             <item><property name="text"><string>A,B,C</string></property></item>
+             <item><property name="text"><string>1,2,3</string></property></item>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="snap_hlayout">
+           <item>
+            <widget class="QLabel" name="label_snap">
+             <property name="text"><string>Snap Tolerance (mm)</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QDoubleSpinBox" name="snap_spinbox">
+             <property name="minimum"><double>1.0</double></property>
+             <property name="maximum"><double>500.0</double></property>
+             <property name="value"><double>10.0</double></property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_create_axes">
+           <property name="text">
+            <string>Create Axes</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QCheckBox" name="chk_move_origin">
+           <property name="text">
+            <string>Move A/1 intersection to (0, 0)</string>
+           </property>
+           <property name="checked">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <!-- ETABS export group -->
+      <item>
+       <widget class="QGroupBox" name="etabs_group">
+        <property name="title">
+         <string>Export to ETABS</string>
+        </property>
+        <layout class="QVBoxLayout" name="etabs_vlayout">
+         <item>
+          <widget class="QListWidget" name="levels_list">
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>150</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="etabs_btn_hlayout">
+           <item>
+            <widget class="QPushButton" name="btn_refresh_levels">
+             <property name="text"><string>Refresh</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="chk_purge">
+             <property name="text"><string>Purge Model</string></property>
+             <property name="checked"><bool>true</bool></property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_export_etabs">
+           <property name="text">
+            <string>Export to ETABS</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <!-- Undo / Redo buttons -->
+      <item>
+       <layout class="QHBoxLayout" name="undo_hlayout">
+        <item>
+         <widget class="QPushButton" name="btn_undo">
+          <property name="text"><string>Undo</string></property>
+          <property name="enabled"><bool>false</bool></property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btn_redo">
+          <property name="text"><string>Redo</string></property>
+          <property name="enabled"><bool>false</bool></property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="undo_spacer">
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <property name="sizeHint" stdset="0">
+           <size><width>40</width><height>20</height></size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btn_close">
+          <property name="text"><string>Close</string></property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <!-- RIGHT PANEL: Matplotlib canvas -->
+   <item>
+    <widget class="QWidget" name="canvas_container">
+     <layout class="QVBoxLayout" name="canvas_vlayout">
+      <item>
+       <widget class="QLabel" name="canvas_placeholder">
+        <property name="text">
+         <string>Import a DXF or AutoCAD selection to preview here.</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

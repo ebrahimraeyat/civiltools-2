@@ -44,6 +44,7 @@ from civiltools.commands import (  # noqa: E402, F401
     # ── Define ──────────────────────────────────────────────────
     explode_seismic,
     define_commands,
+    define_axes,
     # ── Tools ───────────────────────────────────────────────────
     tools_commands,
     extract_rebars,
