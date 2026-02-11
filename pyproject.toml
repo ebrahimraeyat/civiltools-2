@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "civiltools"
+version = "1.0.0-alpha.1"
+description = "Standalone structural engineering application — seismic analysis, design, and report generation"
+readme = "README.md"
+license = { text = "Proprietary" }
+requires-python = ">=3.12"
+authors = [
+    { name = "Ebrahim Raeyat Roknabadi" },
+]
+
+dependencies = [
+    "PySide6>=6.6",
+    "fpdf2>=2.7.6",
+    "python-docx>=1.1",
+    "math2docx>=2.0",
+    "matplotlib>=3.8",
+    "markdown-it-py>=3.0",
+    "pygments>=2.17",
+    "ezdxf>=0.19",
+    "comtypes>=1.4",
+    "pywin32>=306",
+    "platformdirs>=4.0",
+]
+
+[project.optional-dependencies]
+occ = [
+    # pythonocc-core must be installed via conda:
+    #   conda install -c conda-forge pythonocc-core=7.9
+    # It is NOT available on PyPI.
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.3",
+    "nuitka>=2.0",
+    "pyinstaller>=6.0",
+    "ruff>=0.3",
+]
+
+[project.scripts]
+civiltools = "civiltools.__main__:main"
+
+[project.gui-scripts]
+civiltools-gui = "civiltools.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/civiltools"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyside6"

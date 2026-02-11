@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>about</class>
+ <widget class="QDialog" name="about">
+  <property name="windowModality">
+   <enum>Qt::NonModal</enum>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>348</width>
+    <height>274</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Joint Shear BC</string>
+  </property>
+  <property name="windowIcon">
+   
+  </property>
+  <property name="modal">
+   <bool>false</bool>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayout">
+     <item>
+      <widget class="QLabel" name="label_3">
+       <property name="enabled">
+        <bool>true</bool>
+       </property>
+       <property name="text">
+        <string>Structure Type</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="structure_type_combobox">
+       <item>
+        <property name="text">
+         <string>Sway Intermediate</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Sway Special</string>
+        </property>
+       </item>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="show_js_table">
+     <property name="toolTip">
+      <string>Joint Shear Capacity Ratio</string>
+     </property>
+     <property name="text">
+      <string>Show JS Table</string>
+     </property>
+     <property name="checked">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="show_bc_table">
+     <property name="toolTip">
+      <string>(6/5) Beam/Column Capacity Ratios</string>
+     </property>
+     <property name="text">
+      <string>Show BC Table</string>
+     </property>
+     <property name="checked">
+      <bool>false</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="only_show_results_checkbox">
+     <property name="toolTip">
+      <string>Do not Create Joint Shear File and only Show the Results</string>
+     </property>
+     <property name="text">
+      <string>Only Show Results</string>
+     </property>
+     <property name="checked">
+      <bool>false</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="check">
+     <property name="text">
+      <string>Check</string>
+     </property>
+     <property name="icon">
+      
+     </property>
+     <property name="iconSize">
+      <size>
+       <width>100</width>
+       <height>100</height>
+      </size>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
