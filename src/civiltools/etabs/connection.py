@@ -10,20 +10,33 @@ its internal relative imports work correctly.
 
 from __future__ import annotations
 
+import site
 import sys
 from pathlib import Path
 from typing import Any
 
-_ETABS_API_DEFAULT = Path(
-    r"C:\Users\ebrahim\AppData\Roaming\FreeCAD\Mod\etabs_api"
-)
 
+def _get_etabs_api_path() -> Path:
+    """Get etabs_api path from default location."""
+
+    # Default path
+    default = Path(r"G:\etabs_api\src")
+    if default.exists():
+        return default
+    
+    # Fallback for other users
+    sitepackages = site.getsitepackages()
+    for sp in sitepackages:
+        candidate = Path(sp) / "etabs_api"
+        if candidate.exists():
+            return candidate
+    return ""  # Not found
 
 class EtabsConnection:
     """Manages a single ETABS COM session."""
 
     def __init__(self, etabs_api_path: Path | str | None = None):
-        self._api_path = Path(etabs_api_path) if etabs_api_path else _ETABS_API_DEFAULT
+        self._api_path = Path(etabs_api_path) if etabs_api_path else _get_etabs_api_path()
         self._etabs: Any = None        # etabs_obj.EtabsModel instance
         self._connected = False
         self._model_path: str = ""
@@ -63,7 +76,7 @@ class EtabsConnection:
         self._ensure_api_path()
 
         try:
-            import etabs_obj  # noqa: E402  (path set above)
+            from etabs_api import etabs_obj  # noqa: E402  (path set above)
             etabs = etabs_obj.EtabsModel(
                 attach_to_instance=True,
                 backup=False,

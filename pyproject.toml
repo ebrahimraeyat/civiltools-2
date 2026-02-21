@@ -40,6 +40,7 @@ dev = [
     "pyinstaller>=6.0",
     "ruff>=0.3",
     "markitdown[all]>=0.1",
+    "etabs_api @ file:///G:/etabs_api",
 ]
 
 [project.scripts]
@@ -54,6 +55,9 @@ packages = ["src/civiltools"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP"]
