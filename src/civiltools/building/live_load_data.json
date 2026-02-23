@@ -1,0 +1,363 @@
+{
+  "uses": {
+    "roof_ordinary": {
+      "name": "Ordinary Roof",
+      "default_load": 1.5,
+      "concentrated_load": null,
+      "description": "Ordinary flat, sloped, and curved roofs"
+    },
+    "roof_light_covering": {
+      "name": "Roof with Light Covering",
+      "default_load": 0.5,
+      "concentrated_load": null,
+      "description": "Roofs with light covering"
+    },
+    "roof_garden": {
+      "name": "Garden Roof",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Roof with garden and greenhouse covering"
+    },
+    "roof_fabric_structure": {
+      "name": "Fabric Membrane Structure",
+      "default_load": 0.25,
+      "concentrated_load": null,
+      "description": "Fabric membrane covering with skeletal frame (non-reducible)"
+    },
+    "roof_support_fabric": {
+      "name": "Fabric Support Frame",
+      "default_load": 0.25,
+      "concentrated_load": null,
+      "description": "Fabric support frame structure (non-reducible, applied to frame members only)"
+    },
+    "assembly_hall_seats_fixed": {
+      "name": "Assembly Hall - Fixed Seats",
+      "default_load": 3.0,
+      "concentrated_load": null,
+      "description": "Public halls and assembly areas with fixed seating"
+    },
+    "assembly_hall_no_seats": {
+      "name": "Assembly Hall - No Fixed Seats",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Public halls and assembly areas without fixed seating"
+    },
+    "dining_restaurant": {
+      "name": "Dining Hall / Restaurant",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Dining halls and restaurants"
+    },
+    "cinema_theater": {
+      "name": "Cinema / Theater",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Cinema and theater buildings"
+    },
+    "cinema_stage": {
+      "name": "Cinema / Theater Stage",
+      "default_load": 7.5,
+      "concentrated_load": null,
+      "description": "Stage area in cinema and theater"
+    },
+    "ceremony_hall": {
+      "name": "Ceremony / Concert Hall",
+      "default_load": 7.5,
+      "concentrated_load": null,
+      "description": "Ceremony halls, concert halls, choir performance areas"
+    },
+    "mosque_prayer_hall": {
+      "name": "Mosque Prayer Hall",
+      "default_load": 6.0,
+      "concentrated_load": null,
+      "description": "Prayer halls in mosques and shrines"
+    },
+    "waiting_lounge": {
+      "name": "Waiting Lounge / Reception",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Waiting lounges and reception areas"
+    },
+    "bus_terminal": {
+      "name": "Bus Terminal",
+      "default_load": 6.0,
+      "concentrated_load": null,
+      "description": "Bus terminal stations"
+    },
+    "corridor_ground_floor": {
+      "name": "Corridor - Ground Floor",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Corridor subject to crowding on ground floor (entrance)"
+    },
+    "corridor_upper_floors": {
+      "name": "Corridor - Upper Floors",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Corridor subject to crowding on upper floors"
+    },
+    "staircase_exit": {
+      "name": "Staircase / Exit",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Staircase and corridors leading to exit doors"
+    },
+    "staircase_emergency": {
+      "name": "Emergency Staircase",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Emergency staircase"
+    },
+    "corridor_maintenance": {
+      "name": "Maintenance Corridor",
+      "default_load": 2.0,
+      "concentrated_load": null,
+      "description": "Corridor for access to maintenance and building systems"
+    },
+    "balcony": {
+      "name": "Balcony",
+      "default_load": 1.5,
+      "concentrated_load": 1.3,
+      "description": "Balcony - 1.5 times the live load of adjacent rooms (not exceeding 5 kN/m²)"
+    },
+    "residential_rooms": {
+      "name": "Residential - Private Rooms",
+      "default_load": 2.0,
+      "concentrated_load": null,
+      "description": "Living rooms, bedrooms, service areas, storage, and corridors in residential buildings"
+    },
+    "hotel_rooms": {
+      "name": "Hotel - Private Rooms",
+      "default_load": 2.0,
+      "concentrated_load": null,
+      "description": "Private rooms in hotels, hostels, and dormitories"
+    },
+    "retail_small_ground": {
+      "name": "Small Retail - Ground Floor",
+      "default_load": 4.5,
+      "concentrated_load": 5.0,
+      "description": "Small retail shops and stores - ground floor (entrance)"
+    },
+    "retail_small_upper": {
+      "name": "Small Retail - Upper Floors",
+      "default_load": 4.5,
+      "concentrated_load": 5.0,
+      "description": "Small retail shops and stores - upper floors"
+    },
+    "retail_wholesale": {
+      "name": "Wholesale Store",
+      "default_load": 4.5,
+      "concentrated_load": 6.0,
+      "description": "Wholesale stores and distribution centers"
+    },
+    "classroom_light_lab": {
+      "name": "Classroom / Light Laboratory",
+      "default_load": 4.5,
+      "concentrated_load": 2.5,
+      "description": "Classrooms and light laboratories in educational buildings"
+    },
+    "study_room": {
+      "name": "Study Room",
+      "default_load": 4.5,
+      "concentrated_load": 2.5,
+      "description": "Study rooms in libraries and educational buildings"
+    },
+    "library_fixed_shelves": {
+      "name": "Library / Archive - Fixed Shelves",
+      "default_load": 4.5,
+      "concentrated_load": 2.5,
+      "description": "Book storage and archive rooms with fixed shelving (minimum 7.5 kN per meter of height)"
+    },
+    "library_mobile_shelves": {
+      "name": "Library / Archive - Mobile Shelves",
+      "default_load": 4.5,
+      "concentrated_load": 4.0,
+      "description": "Book storage and archive rooms with mobile shelving (minimum 10 kN per meter of height)"
+    },
+    "corridor_school_ground": {
+      "name": "School Corridor - Ground Floor",
+      "default_load": 4.5,
+      "concentrated_load": 4.0,
+      "description": "Corridors on ground floor (entrance) in educational buildings"
+    },
+    "corridor_school_upper": {
+      "name": "School Corridor - Upper Floors",
+      "default_load": 4.5,
+      "concentrated_load": 4.0,
+      "description": "Corridors on upper floors in educational buildings"
+    },
+    "office_general": {
+      "name": "General Office",
+      "default_load": 9.0,
+      "concentrated_load": 2.5,
+      "description": "General office spaces"
+    },
+    "office_waiting_ground": {
+      "name": "Office Waiting Area - Ground Floor",
+      "default_load": 9.0,
+      "concentrated_load": 4.5,
+      "description": "Waiting and reception areas - ground floor (entrance) in office buildings"
+    },
+    "office_corridor_upper": {
+      "name": "Office Corridor - Upper Floors",
+      "default_load": 9.0,
+      "concentrated_load": 2.5,
+      "description": "Corridors on upper floors in office buildings"
+    },
+    "industrial_light": {
+      "name": "Light Industrial Workshop",
+      "default_load": 9.0,
+      "concentrated_load": 6.0,
+      "description": "Light industrial workshops"
+    },
+    "industrial_medium": {
+      "name": "Medium Industrial Workshop",
+      "default_load": 11.0,
+      "concentrated_load": 10.0,
+      "description": "Medium industrial workshops"
+    },
+    "industrial_heavy": {
+      "name": "Heavy Industrial Workshop",
+      "default_load": 12.0,
+      "concentrated_load": 12.0,
+      "description": "Heavy industrial workshops"
+    },
+    "sports_light": {
+      "name": "Light Sports Hall",
+      "default_load": 3.5,
+      "concentrated_load": null,
+      "description": "Light sports halls - table tennis, billiards, etc."
+    },
+    "sports_general": {
+      "name": "General Sports Hall",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Sports halls and physical training facilities"
+    },
+    "sports_fixed_seats": {
+      "name": "Sports Facility - Fixed Seats",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Sports facilities with fixed seating"
+    },
+    "sports_no_seats": {
+      "name": "Sports Facility - No Fixed Seats",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Sports facilities without fixed seating or with bleachers"
+    },
+    "hospital_patient_room": {
+      "name": "Hospital - Patient Room",
+      "default_load": 4.5,
+      "concentrated_load": 2.0,
+      "description": "Patient rooms in hospitals and medical centers"
+    },
+    "hospital_operating_room": {
+      "name": "Hospital - Operating Room",
+      "default_load": 4.5,
+      "concentrated_load": 3.0,
+      "description": "Operating rooms and laboratories in hospitals"
+    },
+    "hospital_corridor_ground": {
+      "name": "Hospital Corridor - Ground Floor",
+      "default_load": 4.5,
+      "concentrated_load": 5.0,
+      "description": "Corridors on ground floor in hospitals"
+    },
+    "hospital_corridor_upper": {
+      "name": "Hospital Corridor - Upper Floors",
+      "default_load": 4.5,
+      "concentrated_load": 4.0,
+      "description": "Corridors on upper floors in hospitals"
+    },
+    "parking_light": {
+      "name": "Parking - Light Vehicles",
+      "default_load": 3.0,
+      "concentrated_load": 15.0,
+      "description": "Parking and driving areas for vehicles up to 40 kN gross weight"
+    },
+    "parking_medium": {
+      "name": "Parking - Medium Vehicles",
+      "default_load": 6.0,
+      "concentrated_load": 30.0,
+      "description": "Parking and driving areas for vehicles 40 to 90 kN gross weight"
+    },
+    "parking_truck": {
+      "name": "Parking - Heavy Vehicles",
+      "default_load": null,
+      "concentrated_load": null,
+      "description": "Roads and areas accessible to trucks (requires special design)"
+    },
+    "kitchen_industrial": {
+      "name": "Industrial Kitchen",
+      "default_load": 6.0,
+      "concentrated_load": null,
+      "description": "Industrial kitchens and laundry facilities"
+    },
+    "elevator_room": {
+      "name": "Elevator Machine Room",
+      "default_load": 3.6,
+      "concentrated_load": null,
+      "description": "Elevator machine rooms"
+    },
+    "mechanical_room": {
+      "name": "Mechanical Room",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "HVAC rooms, pump rooms, and similar mechanical spaces"
+    },
+    "plenum_light_storage": {
+      "name": "Light Storage - Ceiling Space",
+      "default_load": 1.0,
+      "concentrated_load": null,
+      "description": "Light storage spaces in ceiling plenums"
+    },
+    "storage_general": {
+      "name": "General Storage",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "General storage areas (minimum 15 kN per meter of height)"
+    },
+    "cold_storage": {
+      "name": "Cold Storage / Freezer",
+      "default_load": 9.0,
+      "concentrated_load": null,
+      "description": "Cold storage and freezer rooms"
+    },
+    "raised_floor_computer": {
+      "name": "Raised Floor - Computer Room",
+      "default_load": 5.0,
+      "concentrated_load": null,
+      "description": "Raised floors in computer rooms"
+    },
+    "raised_floor_office": {
+      "name": "Raised Floor - Office",
+      "default_load": 2.5,
+      "concentrated_load": null,
+      "description": "Raised floors in office areas"
+    },
+    "helipad": {
+      "name": "Helicopter Landing Pad",
+      "default_load": 3.0,
+      "concentrated_load": null,
+      "description": "Helicopter landing pads"
+    },
+    "engine_room": {
+      "name": "Engine / Generator Room",
+      "default_load": 8.5,
+      "concentrated_load": null,
+      "description": "Engine and generator rooms"
+    }
+  },
+  "default": {
+    "load": 2.0,
+    "concentrated_load": null,
+    "description": "Default live load for general-purpose spaces"
+  },
+  "notes": {
+    "balcony": "Live load should be 1.5 times adjacent room load, but not exceeding 5.0 kN/m²",
+    "concentrated_load": "Concentrated load values are in kN, applied in addition to distributed loads where specified",
+    "storage_height": "Storage areas require load per meter of height; minimum total load specified",
+    "library_height": "Library shelving requires additional load per meter of height; minimum total load specified"
+  }
+}

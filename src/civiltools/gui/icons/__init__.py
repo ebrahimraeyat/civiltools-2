@@ -48,6 +48,7 @@ COMMAND_ICONS: dict[str, str] = {
     "settings": "settings.svg",
     "edit_frame_sections": "frame_sections.svg",
     "aj_correction": "show_aj.svg",
+    "live_load": "wall_load.svg",
     "get_weakness": "weakness.svg",
     "show_weakness": "show_weakness.svg",
     "story_stiffness": "stiffness.svg",

@@ -41,6 +41,7 @@ from civiltools.commands import (  # noqa: E402, F401
     earthquake_factor,
     beam_j,
     assign_commands,
+    live_load,
     # ── Define ──────────────────────────────────────────────────
     explode_seismic,
     define_commands,

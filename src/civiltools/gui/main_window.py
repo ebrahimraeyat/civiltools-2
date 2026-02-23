@@ -352,7 +352,7 @@ class MainWindow(QMainWindow):
         # Key command buttons (subset — full list in menus)
         toolbar_cmds = [
             "settings", "earthquake_factor", "torsion", "drift",
-            "joint_shear", "design_columns", "columns_control", "dynamic_scale",
+            "joint_shear", "design_columns", "columns_control", "dynamic_scale", "live_load"
         ]
         for cmd_id in toolbar_cmds:
             cmd_cls = REGISTRY.get(cmd_id)
