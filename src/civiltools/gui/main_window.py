@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QToolBar, QMessageBox,
@@ -37,6 +37,7 @@ from civiltools.gui.result_widget import ResultWidget
 from civiltools.gui.connect_dialog import ConnectDialog
 from civiltools.gui.param_dialog import ParamDialog
 from civiltools.gui.icons import icon, COMMAND_ICONS, APP_ICON, CONNECT_ICON, REPORT_ICON, QUIT_ICON, HELP_ICON
+from civiltools.gui.busy_dialog import BusyDialog
 
 
 # Map command's table_model string → actual model class
@@ -127,6 +128,13 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self._conn_label)
         self.statusBar().showMessage("Ready — connect to ETABS to begin")
 
+        # ── 10-second polling timer ────────────────────────────────
+        self._poll_busy: bool = False   # guard against re-entrancy
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(10_000)  # 10 seconds
+        self._poll_timer.timeout.connect(self._poll_etabs_status)
+        self._poll_timer.start()
+
     # ── Tab management ──────────────────────────────────────────────
 
     def _close_tab(self, index: int):
@@ -188,20 +196,51 @@ class MainWindow(QMainWindow):
                 if self._conn.model_path
                 else ""
             )
+            ver = self._conn.version
+            ver_str = f" v{ver}" if ver else ""
             self._conn_label.setText(
-                f"  {self._conn.software}: {model}  "
+                f"  {self._conn.software}{ver_str}: {model}  "
             )
             self._conn_label.setStyleSheet(
                 "color: #006400; font-weight: bold; padding: 2px 8px;"
             )
             self.statusBar().showMessage(
-                f"Connected to {self._conn.software}"
+                f"Connected to {self._conn.software}{ver_str} — {model}"
             )
         else:
             self._conn_label.setText("  Not connected  ")
             self._conn_label.setStyleSheet(
                 "color: #888; font-weight: bold; padding: 2px 8px;"
             )
+
+    # ── Polling ───────────────────────────────────────────────
+
+    def _poll_etabs_status(self):
+        """Called every 10 s by QTimer. Probes ETABS COM without blocking UI."""
+        if self._poll_busy:
+            return
+        self._poll_busy = True
+        try:
+            if not self._conn.is_connected:
+                # Not connected — try a silent auto-connect
+                ok = self._conn.connect("ETABS")
+                if ok:
+                    self._update_conn_status()
+                return
+            # Already connected — refresh model path and detect if ETABS closed
+            prev_path = self._conn.model_path
+            still_alive = self._conn.refresh()
+            if not still_alive:
+                self._update_conn_status()
+                self.statusBar().showMessage(
+                    "ETABS connection lost — File → Connect to Software to reconnect"
+                )
+                return
+            # Update status bar only when something changed
+            if self._conn.model_path != prev_path:
+                self._update_conn_status()
+        finally:
+            self._poll_busy = False
 
     # ── Command execution ───────────────────────────────────────────
 
@@ -215,42 +254,53 @@ class MainWindow(QMainWindow):
             return
 
         if getattr(cmd_class, 'requires_etabs', True) and not self._conn.is_connected:
+            # Try a silent auto-connect before asking the user to connect manually
+            if self._conn.connect("ETABS"):
+                self._update_conn_status()
+
+        if getattr(cmd_class, 'requires_etabs', True) and not self._conn.is_connected:
             QMessageBox.warning(
                 self,
                 "Not Connected",
-                "Please connect to ETABS first.\n\n"
-                "File → Connect to Software",
+                "Could not connect to ETABS automatically.\n\n"
+                "Please open ETABS with a model loaded, then use\n"
+                "File → Connect to Software.",
             )
             return
 
         # ── Dialog-based command (loads .ui file) ───────────────────
-        if cmd_class.dialog_class:
-            result = self._run_dialog_command(cmd_class)
-            if result is None:
-                return  # user cancelled
-        else:
-            # ── Param-based fallback ────────────────────────────────
-            cmd_params = cmd_class.parameters()
-            user_params: dict[str, Any] = {}
-            if cmd_params:
-                dlg = ParamDialog(cmd_class.label, cmd_params, self)
-                if dlg.exec() != dlg.DialogCode.Accepted:
+        self._poll_busy = True   # prevent COM re-entrancy from the 10s timer
+        try:
+            if cmd_class.dialog_class:
+                result = self._run_dialog_command(cmd_class)
+                if result is None:
+                    return  # user cancelled
+            else:
+                # ── Param-based fallback ────────────────────────────────
+                cmd_params = cmd_class.parameters()
+                user_params: dict[str, Any] = {}
+                if cmd_params:
+                    dlg = ParamDialog(cmd_class.label, cmd_params, self)
+                    if dlg.exec() != dlg.DialogCode.Accepted:
+                        return
+                    user_params = dlg.get_values()
+
+                self.statusBar().showMessage(f"Running {cmd_class.label}…")
+                QApplication.processEvents()
+
+                try:
+                    with BusyDialog(cmd_class.label, parent=self):
+                        result = cmd_class.execute(self._conn.etabs, user_params)
+                except Exception as exc:
+                    QMessageBox.critical(
+                        self,
+                        "Command Error",
+                        f"{cmd_class.label} failed:\n\n{exc}",
+                    )
+                    self.statusBar().showMessage("Command failed")
                     return
-                user_params = dlg.get_values()
-
-            self.statusBar().showMessage(f"Running {cmd_class.label}…")
-            QApplication.processEvents()
-
-            try:
-                result = cmd_class.execute(self._conn.etabs, user_params)
-            except Exception as exc:
-                QMessageBox.critical(
-                    self,
-                    "Command Error",
-                    f"{cmd_class.label} failed:\n\n{exc}",
-                )
-                self.statusBar().showMessage("Command failed")
-                return
+        finally:
+            self._poll_busy = False
 
         # Display result
         self._add_result_tab(result, cmd_class)
@@ -414,3 +464,7 @@ class MainWindow(QMainWindow):
             "<p>Standalone replacement for the FreeCAD-based civilTools "
             "workbench.</p>",
         )
+
+    def closeEvent(self, event):  # noqa: N802
+        self._poll_timer.stop()
+        super().closeEvent(event)

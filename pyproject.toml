@@ -14,17 +14,25 @@ authors = [
 ]
 
 dependencies = [
-    "PySide6>=6.6",
-    "fpdf2>=2.7.6",
-    "python-docx>=1.1",
+    "comtypes>=1.4.9",
+    "etabs-api @ git+https://github.com/ebrahimraeyat/etabs_api.git",
+    "pyside6>=6.10.1",
+    "fpdf2>=2.8.0",
+    "python-docx>=1.2.0",
     "math2docx>=2.0",
-    "matplotlib>=3.8",
-    "markdown-it-py>=3.0",
-    "pygments>=2.17",
+    "matplotlib>=3.10.0",
     "ezdxf>=0.19",
-    "comtypes>=1.4",
     "pywin32>=306",
     "platformdirs>=4.0",
+    "numpy>=2.2.2",
+    "pandas>=2.2.3",
+    "pyyaml",
+    "scipy>=1.15.1",
+    "jupyter",
+
+
+#    "pygments>=2.17",
+#    "markdown-it-py>=3.0",
 ]
 
 [project.optional-dependencies]

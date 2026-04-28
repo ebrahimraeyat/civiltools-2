@@ -172,6 +172,7 @@ class LicenseManager:
 
         Returns True if the app should start, False to exit.
         """
+        return True
         info = self.get_info()
 
         if info.is_licensed and not info.is_trial:

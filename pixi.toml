@@ -1,0 +1,32 @@
+[project]
+name = "civiltools"
+version = "1.0.0"
+description = "Standalone structural engineering application"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+# Python + conda-only packages
+[dependencies]
+python = ">=3.12,<3.13"
+pythonocc-core = "7.9.*"
+
+# All PyPI packages from pyproject.toml
+[pypi-dependencies]
+civiltools = { path = ".", editable = true }
+
+[tasks]
+start = "python -m civiltools"
+build-pyinstaller = "python build/build_pyinstaller.py"
+build-nuitka = "python build/build_nuitka.py"
+test = "pytest"
+
+[feature.dev.pypi-dependencies]
+pytest = ">=8.0"
+pytest-qt = ">=4.3"
+nuitka = ">=2.0"
+pyinstaller = ">=6.0"
+ruff = ">=0.3"
+
+[environments]
+default = { features = [], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }

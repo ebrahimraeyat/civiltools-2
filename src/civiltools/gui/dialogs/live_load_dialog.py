@@ -138,10 +138,59 @@ class _PlanView(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._polys: dict[str, QPolygonF] = {}
+        self._pan_active: bool = False
+        self._pan_start_x: int = 0
+        self._pan_start_y: int = 0
 
     def set_area_polygons(self, polys: dict[str, QPolygonF]):
         self._polys = polys
+
+    # -- Wheel zoom ---------------------------------------------------
+    def wheelEvent(self, e):  # noqa: N802
+        factor = 1.15 if e.angleDelta().y() > 0 else 1 / 1.15
+        self.scale(factor, factor)
+
+    # -- Middle-button pan --------------------------------------------
+    def mousePressEvent(self, e):  # noqa: N802
+        if e.button() == Qt.MouseButton.MiddleButton:
+            self._pan_active = True
+            self._pan_start_x = e.position().x()
+            self._pan_start_y = e.position().y()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            e.accept()
+            return
+        # -- Click-to-select (left button) ----------------------------
+        pos = self.mapToScene(e.position().toPoint())
+        for aid, poly in self._polys.items():
+            if poly.containsPoint(QPointF(pos.x(), pos.y()), Qt.FillRule.OddEvenFill):
+                self.area_clicked.emit(aid)
+                return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):  # noqa: N802
+        if self._pan_active:
+            dx = e.position().x() - self._pan_start_x
+            dy = e.position().y() - self._pan_start_y
+            self._pan_start_x = e.position().x()
+            self._pan_start_y = e.position().y()
+            self.horizontalScrollBar().setValue(
+                int(self.horizontalScrollBar().value() - dx))
+            self.verticalScrollBar().setValue(
+                int(self.verticalScrollBar().value() - dy))
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):  # noqa: N802
+        if e.button() == Qt.MouseButton.MiddleButton:
+            self._pan_active = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
 
     # -- Drag-and-drop ------------------------------------------------
     def dragEnterEvent(self, e):  # noqa: N802
@@ -161,15 +210,6 @@ class _PlanView(QGraphicsView):
                 return
         self.floor_dropped.emit(txt)
         e.acceptProposedAction()
-
-    # -- Click-to-select ----------------------------------------------
-    def mousePressEvent(self, e):  # noqa: N802
-        pos = self.mapToScene(e.position().toPoint())
-        for aid, poly in self._polys.items():
-            if poly.containsPoint(QPointF(pos.x(), pos.y()), Qt.FillRule.OddEvenFill):
-                self.area_clicked.emit(aid)
-                return
-        super().mousePressEvent(e)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -210,6 +250,12 @@ class LiveLoadDialog(QDialog):
         self._floor_ids: list[str] = []
         self._current_floor_idx: int = 0
 
+        # Tracks the current multi-selection mode for the bulk panel:
+        #   "catalog"  – multiple floors/areas; pick a use-type from combo
+        #   "propagate" – 1 area + N floors; propagate that area to same-named
+        #                 area in each selected floor
+        self._bulk_mode: str = "catalog"
+
         self.setWindowTitle("Live Load Management")
         self.resize(1100, 800)
 
@@ -237,6 +283,24 @@ class LiveLoadDialog(QDialog):
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         left_lay.addWidget(self.tree)
+
+        # ── Bulk-assign panel (shown only when ≥2 items selected) ──
+        self.bulk_group = QGroupBox("Assign to Selected Floors / Areas")
+        bulk_lay = QHBoxLayout(self.bulk_group)
+        bulk_lay.setContentsMargins(6, 4, 6, 4)
+        self.lbl_bulk_count = QLabel("0 items selected")
+        bulk_lay.addWidget(self.lbl_bulk_count)
+        self.combo_bulk = QComboBox()
+        self.combo_bulk.setMinimumWidth(220)
+        self.combo_bulk.setToolTip("انتخاب کاربری برای اعمال به تمام طبقات / کف‌های انتخاب‌شده")
+        bulk_lay.addWidget(self.combo_bulk, 1)
+        self.btn_bulk_apply = QPushButton("Apply to Selected")
+        self.btn_bulk_apply.setToolTip(
+            "اعمال کاربری انتخاب‌شده به تمام طبقات/کف‌های انتخاب‌شده در درخت")
+        bulk_lay.addWidget(self.btn_bulk_apply)
+        self.bulk_group.setVisible(False)
+        left_lay.addWidget(self.bulk_group)
+
         top_splitter.addWidget(left_w)
 
         # ── Right: floor plan + navigation ─────────────────────────
@@ -378,6 +442,7 @@ class LiveLoadDialog(QDialog):
         self.plan_view.area_clicked.connect(self._on_plan_area_clicked)
         self.plan_view.area_dropped.connect(self._on_plan_area_dropped)
         self.plan_view.floor_dropped.connect(self._on_plan_floor_dropped)
+        self.btn_bulk_apply.clicked.connect(self._on_bulk_apply)
 
         for btn in self._fav_buttons:
             btn.clicked.connect(self._on_fav_clicked)
@@ -471,6 +536,7 @@ class LiveLoadDialog(QDialog):
             self.btn_apply.setEnabled(True)
             if self._floor_ids:
                 self._render_floor_plan(self._floor_ids[0])
+            self._populate_bulk_combo()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load from ETABS:\n{e}")
 
@@ -1121,6 +1187,110 @@ class LiveLoadDialog(QDialog):
                 if (d := it.data(0, Qt.ItemDataRole.UserRole)) is not None]
 
     # ================================================================
+    #  Bulk-assign panel
+    # ================================================================
+    def _populate_bulk_combo(self):
+        """Fill combo_bulk with all catalog usage types (code → name)."""
+        self.combo_bulk.blockSignals(True)
+        prev = self.combo_bulk.currentData()
+        self.combo_bulk.clear()
+        for code, name in sorted(self._code_to_name.items(),
+                                 key=lambda kv: kv[1]):
+            load = self._code_to_load.get(code)
+            label = f"{name}  ({load:.0f} kgf/m²)" if load is not None else name
+            self.combo_bulk.addItem(label, userData=code)
+        # restore previous selection if still present
+        if prev:
+            idx = self.combo_bulk.findData(prev)
+            if idx >= 0:
+                self.combo_bulk.setCurrentIndex(idx)
+        self.combo_bulk.blockSignals(False)
+
+    def _on_bulk_apply(self):
+        """Dispatch to the correct bulk-assign strategy based on _bulk_mode."""
+        code = self.combo_bulk.currentData()
+        if not code or not self.project:
+            return
+        load_val = self._code_to_load.get(code)
+        if load_val is None:
+            QMessageBox.warning(self, "Warning",
+                                f"No load value found for code '{code}'.")
+            return
+        use_name = self._code_to_name.get(code, code)
+
+        if self._bulk_mode == "propagate":
+            self._propagate_area_to_floors(code, load_val, use_name)
+        else:
+            self._apply_catalog_code(code, load_val, use_name)
+
+    def _propagate_area_to_floors(self, code: str, load_val: float, use_name: str):
+        """Assign *code*/*load_val* to the same-named area in each selected floor.
+
+        Selection must be: exactly 1 area item + ≥1 floor items.
+        The area name (aid) from the single selected area is used as the key
+        to look up the matching area object inside every selected floor.
+        Areas with a different name in those floors are left untouched.
+        """
+        payloads = self._selected_payloads()
+        area_payloads  = [d for d in payloads if d[0] == "area"]
+        floor_payloads = [d for d in payloads if d[0] == "floor"]
+
+        if len(area_payloads) != 1 or not floor_payloads:
+            return
+
+        src_aid = area_payloads[0][2]  # the area id (name) to propagate
+
+        self._push_undo()
+        applied_floors: list[str] = []
+        missing_floors: list[str] = []
+
+        for d in floor_payloads:
+            fid = d[1]
+            floor = self.project.floors.get(fid)
+            if not floor:
+                continue
+            target_area = floor.areas.get(src_aid)
+            if target_area is None:
+                missing_floors.append(fid)
+                continue
+            target_area.use_type = code
+            target_area.set_manual_load(load_val)
+            # keep load-pattern combo in sync
+            ac = self._area_combos.get((fid, src_aid))
+            if ac:
+                self._auto_set_load_pattern(code, ac)
+            applied_floors.append(fid)
+
+        # Also update the source area itself (it was already selected)
+        src_fid = area_payloads[0][1]
+        src_area = self.project.floors[src_fid].areas.get(src_aid)
+        if src_area:
+            src_area.use_type = code
+            src_area.set_manual_load(load_val)
+            ac = self._area_combos.get((src_fid, src_aid))
+            if ac:
+                self._auto_set_load_pattern(code, ac)
+
+        self._bump_favorite(code)
+        self._update_tree_loads()
+        self._render_floor_plan(src_fid, highlight_area_id=src_aid)
+        self._on_selection_changed()
+
+        msg = (
+            f"'{use_name}' ({load_val:.0f} kgf/m²) propagated to "
+            f"area '{src_aid}' in {len(applied_floors)} floor(s)."
+        )
+        if missing_floors:
+            msg += (
+                f"\n\nNote: area '{src_aid}' was not found in "
+                f"{len(missing_floors)} floor(s): {', '.join(missing_floors[:5])}"
+                + (" …" if len(missing_floors) > 5 else "")
+            )
+            QMessageBox.information(self, "Propagation Result", msg)
+        else:
+            self.lbl_notes.setText(msg)
+
+    # ================================================================
     #  Floor plan rendering
     # ================================================================
     def _current_floor_id(self) -> str | None:
@@ -1347,6 +1517,7 @@ class LiveLoadDialog(QDialog):
         payloads = self._selected_payloads()
         if not payloads:
             self._enable_properties(False)
+            self.bulk_group.setVisible(False)
             return
 
         self._enable_properties(True)
@@ -1356,19 +1527,88 @@ class LiveLoadDialog(QDialog):
         data = payloads[0]
 
         if len(payloads) > 1:
-            fids = sorted({d[1] for d in payloads if d[0] == "floor"})
-            self.lbl_id.setText(f"{len(payloads)} items selected")
+            area_payloads  = [d for d in payloads if d[0] == "area"]
+            floor_payloads = [d for d in payloads if d[0] == "floor"]
+            n_floors = len(floor_payloads)
+            n_areas  = len(area_payloads)
+
+            # ── Propagate mode: exactly 1 area + ≥1 floors ──────────
+            if n_areas == 1 and n_floors >= 1:
+                self._bulk_mode = "propagate"
+                src_fid, src_aid = area_payloads[0][1], area_payloads[0][2]
+                src_area = self.project.floors[src_fid].areas.get(src_aid)
+                src_code = src_area.use_type if src_area else None
+                src_name = self._code_to_name.get(src_code or "", src_code or "-")
+                src_load = self._resolve_area_load(src_fid, src_aid)
+
+                self.lbl_id.setText(f"Area '{src_aid}' + {n_floors} floor(s)")
+                self.lbl_use_type.setText(src_name)
+                self.lbl_calc_load.setText(
+                    f"{src_load:.0f} kgf/m²" if src_load is not None else "-"
+                )
+                self.lbl_source.setText("Propagate to floors")
+                self.lbl_notes.setText(
+                    f"Area '{src_aid}' will be assigned to the same-named area "
+                    f"in each selected floor."
+                )
+                self._render_floor_plan(src_fid, highlight_area_id=src_aid)
+
+                # Pre-fill combo with source area's current code (editable)
+                if not self.combo_bulk.count():
+                    self._populate_bulk_combo()
+                if src_code:
+                    idx = self.combo_bulk.findData(src_code)
+                    if idx >= 0:
+                        self.combo_bulk.setCurrentIndex(idx)
+
+                fid_list = ", ".join(floor_payloads[i][1] for i in range(min(3, n_floors)))
+                if n_floors > 3:
+                    fid_list += f" … (+{n_floors - 3} more)"
+                self.lbl_bulk_count.setText(
+                    f"Propagate '{src_aid}' → {n_floors} floor(s): {fid_list}"
+                )
+                self.bulk_group.setTitle("Propagate Area Assignment to Floors")
+                self.btn_bulk_apply.setText("Propagate to Selected Floors")
+                self.bulk_group.setVisible(True)
+                self.spin_manual.setEnabled(False)
+                self.chk_balcony.setEnabled(False)
+                self.spin_manual.blockSignals(False)
+                self.chk_balcony.blockSignals(False)
+                return
+
+            # ── Catalog mode: generic multi-selection ────────────────
+            self._bulk_mode = "catalog"
+            self.bulk_group.setTitle("Assign to Selected Floors / Areas")
+            self.btn_bulk_apply.setText("Apply to Selected")
+            parts = []
+            if n_floors:
+                parts.append(f"{n_floors} floor(s)")
+            if n_areas:
+                parts.append(f"{n_areas} area(s)")
+            count_text = ", ".join(parts) or f"{len(payloads)} items"
+            self.lbl_id.setText(count_text + " selected")
             self.lbl_use_type.setText("-")
+            fids = sorted({d[1] for d in floor_payloads})
             if fids:
                 self._render_floor_plan(fids[0])
             self.spin_manual.setEnabled(False)
             self.chk_balcony.setEnabled(False)
             self.lbl_calc_load.setText("-")
             self.lbl_source.setText("-")
-            self.lbl_notes.setText("Double-click or drag a catalog entry to apply.")
+            self.lbl_notes.setText(
+                "Use the \"Assign to Selected\" panel below the tree, "
+                "or double-click / drag a catalog entry."
+            )
+            if not self.combo_bulk.count():
+                self._populate_bulk_combo()
+            self.lbl_bulk_count.setText(count_text + " selected")
+            self.bulk_group.setVisible(True)
             self.spin_manual.blockSignals(False)
             self.chk_balcony.blockSignals(False)
             return
+
+        # Single selection → hide bulk panel
+        self.bulk_group.setVisible(False)
 
         kind = data[0]
         if kind == "project":
