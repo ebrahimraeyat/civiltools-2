@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout
 
 from civiltools.etabs.config import get_settings_from_etabs
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -111,9 +112,15 @@ class TorsionDialog(QDialog):
             return
 
         try:
-            df = self._etabs.get_diaphragm_max_over_avg_drifts(
-                loadcases=loadcases
-            )
+            with BusyDialog(
+                "Torsion Check",
+                status_text="ETABS is analyzing diaphragm drift ratios and reading torsion irregularity results…",
+                parent=self,
+                disable_widgets=[self.ui],
+            ) as dlg:
+                df = dlg.run(lambda: self._etabs.get_diaphragm_max_over_avg_drifts(
+                    loadcases=loadcases
+                ))
         except Exception as exc:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", str(exc))

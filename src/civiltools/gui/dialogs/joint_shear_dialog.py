@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
 
 from civiltools.etabs.config import get_settings_from_etabs
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -83,13 +84,19 @@ class JointShearDialog(QDialog):
         structure_type = self.ui.structure_type_combobox.currentText()
 
         try:
-            self._etabs.save()
-            df = self._etabs.create_joint_shear_bcc_file(
-                filename,
-                structure_type,
-                open_main_file=True,
-                create_file=create_file,
-            )
+            with BusyDialog(
+                "Joint Shear / BCC Check",
+                status_text="ETABS is creating the analysis file, running the design workflow, and reading joint results…",
+                parent=self,
+                disable_widgets=[self.ui],
+            ) as dlg:
+                def _do_check():
+                    self._etabs.save()
+                    return self._etabs.create_joint_shear_bcc_file(
+                        filename, structure_type,
+                        open_main_file=True, create_file=create_file,
+                    )
+                df = dlg.run(_do_check)
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
             return

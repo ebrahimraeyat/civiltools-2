@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from civiltools.etabs import config
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -132,8 +133,14 @@ class Columns10030Dialog(QDialog):
             load_names = self._etabs.get_dynamic_loadcases(d)
 
         try:
-            df = self._etabs.frame_obj.require_100_30(
-                load_names, file_path, type_, self._code)
+            with BusyDialog(
+                "Columns 100-30 Check",
+                status_text="ETABS is evaluating orthogonal load combinations and reading the column design requirement…",
+                parent=self,
+                disable_widgets=[self.ui],
+            ) as dlg:
+                df = dlg.run(lambda: self._etabs.frame_obj.require_100_30(
+                    load_names, file_path, type_, self._code))
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
             return

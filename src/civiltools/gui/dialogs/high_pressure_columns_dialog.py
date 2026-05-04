@@ -13,6 +13,7 @@ from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox, QDialogButtonBox
 
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -65,7 +66,13 @@ class HighPressureColumnsDialog(QDialog):
         limit = sp.value() if sp else 0.3
 
         try:
-            df = self._etabs.database.get_axial_pressure_columns(limit)
+            with BusyDialog(
+                "High Pressure Columns",
+                status_text="ETABS is checking axial pressure demand and collecting overstressed columns…",
+                parent=self,
+                disable_widgets=[self.ui],
+            ) as dlg:
+                df = dlg.run(lambda: self._etabs.database.get_axial_pressure_columns(limit))
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
             return

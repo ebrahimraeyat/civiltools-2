@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
 
 from civiltools.etabs.config import get_settings_from_etabs
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -156,19 +157,6 @@ class DriftDialog(QDialog):
                 if ruy1 and ruy1 >= ruy:
                     cdy = d.get("cdy1", cdy)
 
-        # T file creation (like original drift.py)
-        if create_t_file:
-            try:
-                from civiltools.etabs.config import get_settings_from_etabs as _gs
-                self._etabs.unlock_model()
-                tx, ty, main_file = self._etabs.get_drift_periods(
-                    structure_type=structure_type
-                )
-            except Exception as exc:
-                QMessageBox.critical(self, "Error",
-                                     f"Failed to create T file:\n{exc}")
-                return
-
         # Collect loadcases
         x_loadcases, y_loadcases, loadcases = self._get_load_cases(tab)
         if not loadcases:
@@ -179,28 +167,46 @@ class DriftDialog(QDialog):
                                 "Please select at least one load case.")
             return
 
-        # Scale response spectrums if dynamic tab
-        if tab == 1 and create_t_file:
-            x_specs, y_specs, _ = self._get_load_cases(tab=1)
-            ex_name = d.get("ex_drift_combobox", "")
-            ey_name = d.get("ey_drift_combobox", "")
-            x_sf = float(self.ui.x_scalefactor_combobox.currentText())
-            y_sf = float(self.ui.y_scalefactor_combobox.currentText())
-            try:
-                self._etabs.scale_response_spectrums(
-                    ex_name, ey_name, x_specs, y_specs, x_sf, y_sf,
-                )
-            except Exception:
-                pass
-
-        # Get drifts
         try:
-            ret = self._etabs.get_drifts(
-                no_of_stories, cdx, cdy,
-                loadcases, x_loadcases, y_loadcases,
-            )
+            with BusyDialog(
+                "Automatic Drift Check",
+                status_text="ETABS is preparing the model, running the drift analysis, and reading story drifts…",
+                parent=self,
+                disable_widgets=[self.ui],
+            ) as dlg:
+                def _do_analysis():
+                    main_file = None
+                    if create_t_file:
+                        self._etabs.unlock_model()
+                        _tx, _ty, main_file = self._etabs.get_drift_periods(
+                            structure_type=structure_type
+                        )
+                    if tab == 1 and create_t_file:
+                        x_specs, y_specs, _ = self._get_load_cases(tab=1)
+                        ex_name = d.get("ex_drift_combobox", "")
+                        ey_name = d.get("ey_drift_combobox", "")
+                        x_sf = float(self.ui.x_scalefactor_combobox.currentText())
+                        y_sf = float(self.ui.y_scalefactor_combobox.currentText())
+                        try:
+                            self._etabs.scale_response_spectrums(
+                                ex_name, ey_name, x_specs, y_specs, x_sf, y_sf,
+                            )
+                        except Exception:
+                            pass
+                    _ret = self._etabs.get_drifts(
+                        no_of_stories, cdx, cdy,
+                        loadcases, x_loadcases, y_loadcases,
+                    )
+                    if create_t_file and structure_type == "steel" and main_file:
+                        try:
+                            self._etabs.SapModel.File.OpenFile(str(main_file))
+                        except Exception:
+                            pass
+                    return _ret
+
+                ret = dlg.run(_do_analysis)
         except Exception as exc:
-            QMessageBox.critical(self, "Error", f"get_drifts failed:\n{exc}")
+            QMessageBox.critical(self, "Error", f"Drift check failed:\n{exc}")
             return
 
         if ret is None:
@@ -209,13 +215,6 @@ class DriftDialog(QDialog):
                 "Please check that you assigned diaphragm to stories."
             )
             return
-
-        # Reopen main file if T file was created
-        if create_t_file and structure_type == "steel":
-            try:
-                self._etabs.SapModel.File.OpenFile(str(main_file))
-            except Exception:
-                pass
 
         df = pd.DataFrame(ret[0], columns=ret[1])
 

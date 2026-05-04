@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
 
 from civiltools.etabs.config import get_settings_from_etabs
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -212,10 +213,16 @@ class ResponseSpectrumDialog(QDialog):
                     angular_model.data(angular_model.index(row, 2))
                 )
             try:
-                _, df = self._etabs.angles_response_spectrums_analysis(
-                    ex_name, ey_name, angular_specs, section_cuts,
-                    x_scale, num_iter, tolerance, reset, analyze,
-                )
+                with BusyDialog(
+                    "Response Spectrum Analysis",
+                    status_text="ETABS is scaling spectra and collecting base-shear results…",
+                    parent=self,
+                    disable_widgets=[self.ui],
+                ) as dlg:
+                    _, df = dlg.run(lambda: self._etabs.angles_response_spectrums_analysis(
+                        ex_name, ey_name, angular_specs, section_cuts,
+                        x_scale, num_iter, tolerance, reset, analyze,
+                    ))
             except Exception as exc:
                 QMessageBox.critical(self, "Error", str(exc))
                 return
@@ -229,11 +236,17 @@ class ResponseSpectrumDialog(QDialog):
                                     "Select at least one spectrum load case.")
                 return
             try:
-                _, _, df = self._etabs.scale_response_spectrums(
-                    ex_name, ey_name, x_specs, y_specs,
-                    x_scale, y_scale, num_iter, tolerance,
-                    reset, analyze, consider_min,
-                )
+                with BusyDialog(
+                    "Response Spectrum Analysis",
+                    status_text="ETABS is running the combination analysis and updating response-spectrum scales…",
+                    parent=self,
+                    disable_widgets=[self.ui],
+                ) as dlg:
+                    _, _, df = dlg.run(lambda: self._etabs.scale_response_spectrums(
+                        ex_name, ey_name, x_specs, y_specs,
+                        x_scale, y_scale, num_iter, tolerance,
+                        reset, analyze, consider_min,
+                    ))
             except Exception as exc:
                 QMessageBox.critical(self, "Error", str(exc))
                 return

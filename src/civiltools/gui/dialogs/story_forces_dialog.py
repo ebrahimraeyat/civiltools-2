@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox, QDialogButtonBo
 
 from civiltools.etabs.config import get_settings_from_etabs
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -88,8 +89,14 @@ class StoryForcesDialog(QDialog):
         y_cases = self._get_checked("y_loadcase_list")
 
         try:
-            df = self._etabs.get_story_forces_with_percentages(
-                loadcases=x_cases + y_cases)
+            with BusyDialog(
+                "Story Shear Forces",
+                status_text="ETABS is reading story shears and computing the percentage distribution…",
+                parent=self,
+                disable_widgets=[self.ui],
+            ) as dlg:
+                df = dlg.run(lambda: self._etabs.get_story_forces_with_percentages(
+                    loadcases=x_cases + y_cases))
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
             return

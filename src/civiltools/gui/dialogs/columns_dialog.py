@@ -15,6 +15,7 @@ from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox, QApplication
 
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -48,55 +49,49 @@ class ColumnsControlDialog(QDialog):
     def _check(self):
         """Compare adjacent-story column sections and build result."""
         try:
-            QApplication.setOverrideCursor(QApplication.instance().overrideCursor() or __import__('PySide6.QtCore', fromlist=['Qt']).Qt.CursorShape.WaitCursor)
-        except Exception:
-            pass
+            with BusyDialog(
+                "Columns Control",
+                status_text="ETABS is reading stacked columns, comparing section properties, and checking design continuity…",
+                parent=self,
+                disable_widgets=[self.ui],
+            ) as dlg:
+                def _do_check():
+                    etabs = self._etabs
+                    _names_df = etabs.frame_obj.stacked_columns_dataframe_by_points()
+                    _secs_df  = _names_df.copy(deep=True)
+                    etabs.set_current_unit('kgf', 'cm')
+                    col_names    = etabs.frame_obj.concrete_section_names('Column')
+                    _sec_areas   = etabs.frame_obj.get_section_area(col_names)
+                    for col in _secs_df.columns:
+                        for row_idx in _secs_df.index:
+                            name = _secs_df.at[row_idx, col]
+                            if name and name != '':
+                                sec = etabs.SapModel.FrameObj.GetSection(name)[0]
+                                _secs_df.at[row_idx, col] = sec or ''
+                    nrows = len(_names_df)
+                    _cmp  = {}
+                    for col in _names_df.columns:
+                        for pos in range(nrows - 1):
+                            idx  = _names_df.index[pos]
+                            idn  = _names_df.index[pos + 1]
+                            ab   = _names_df.at[idx, col]
+                            bl   = _names_df.at[idn, col]
+                            if ab and bl and ab != '' and bl != '':
+                                try:
+                                    _cmp[(idx, col)] = etabs.prop_frame.compare_two_columns(
+                                        bl, ab, _sec_areas
+                                    ).name
+                                except Exception:
+                                    _cmp[(idx, col)] = 'not_checked'
+                            else:
+                                _cmp[(idx, col)] = 'not_checked'
+                        _cmp[(_names_df.index[-1], col)] = 'OK'
+                    return _names_df, _secs_df, _sec_areas, _cmp
 
-        try:
-            etabs = self._etabs
-            columns_type_names_df = etabs.frame_obj.stacked_columns_dataframe_by_points()
-            columns_type_sections_df = columns_type_names_df.copy(deep=True)
-            etabs.set_current_unit('kgf', 'cm')
-            column_names = etabs.frame_obj.concrete_section_names('Column')
-            section_areas = etabs.frame_obj.get_section_area(column_names)
-
-            # Replace column names with section names in the display DF
-            for col in columns_type_sections_df.columns:
-                for row_idx in columns_type_sections_df.index:
-                    name = columns_type_sections_df.at[row_idx, col]
-                    if name and name != '':
-                        sec = etabs.SapModel.FrameObj.GetSection(name)[0]
-                        columns_type_sections_df.at[row_idx, col] = sec or ''
-
-            # Build comparison results
-            nrows = len(columns_type_names_df)
-            comparison_results = {}
-            for col in columns_type_names_df.columns:
-                for row_idx_pos in range(nrows - 1):
-                    row_idx = columns_type_names_df.index[row_idx_pos]
-                    above_col = columns_type_names_df.at[row_idx, col]
-                    below_row_idx = columns_type_names_df.index[row_idx_pos + 1]
-                    below_col = columns_type_names_df.at[below_row_idx, col]
-                    if above_col and below_col and above_col != '' and below_col != '':
-                        try:
-                            result = etabs.prop_frame.compare_two_columns(
-                                below_col, above_col, section_areas
-                            )
-                            comparison_results[(row_idx, col)] = result.name
-                        except Exception:
-                            comparison_results[(row_idx, col)] = 'not_checked'
-                    else:
-                        comparison_results[(row_idx, col)] = 'not_checked'
-                # Last row is always OK
-                last_row_idx = columns_type_names_df.index[-1]
-                comparison_results[(last_row_idx, col)] = 'OK'
-
+                columns_type_names_df, columns_type_sections_df, section_areas, comparison_results = dlg.run(_do_check)
         except Exception as exc:
-            QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Error", str(exc))
             return
-
-        QApplication.restoreOverrideCursor()
 
         # Count issues
         issues = [v for v in comparison_results.values()

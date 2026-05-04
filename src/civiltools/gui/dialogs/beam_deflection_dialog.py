@@ -13,6 +13,7 @@ from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox, QApplication
 
 from civiltools.commands.base import CommandResult
+from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
@@ -48,7 +49,13 @@ class BeamDeflectionDialog(QDialog):
 
     def _run(self):
         try:
-            df = self._etabs.design.get_deflection_of_beams()
+            with BusyDialog(
+                "Beam Deflection Control",
+                status_text="ETABS is reading beam design output and checking deflection limits…",
+                parent=self,
+                disable_widgets=[self.ui],
+            ) as dlg:
+                df = dlg.run(lambda: self._etabs.design.get_deflection_of_beams())
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
             return

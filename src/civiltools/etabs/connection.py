@@ -57,6 +57,8 @@ class EtabsConnection:
         self._software: str = "ETABS"
         self._error: str = ""
         self._version: str = ""
+        self._pid: int | None = None
+        self._hwnd: int = 0
 
     # ------------------------------------------------------------------
     @property
@@ -105,6 +107,7 @@ class EtabsConnection:
                     self._model_path = etabs.SapModel.GetModelFilename()
                 except Exception:
                     self._model_path = ""
+                self._remember_connected_instance()
                 return True
             else:
                 self._error = (
@@ -123,6 +126,8 @@ class EtabsConnection:
         self._connected = False
         self._model_path = ""
         self._version = ""
+        self._pid = None
+        self._hwnd = 0
 
     # ------------------------------------------------------------------
     def list_instances(self, software: str = "ETABS") -> list[dict]:
@@ -203,10 +208,12 @@ class EtabsConnection:
                 self._etabs = etabs
                 self._connected = True
                 self._version = ""
+                self._pid = pid
                 try:
                     self._model_path = etabs.SapModel.GetModelFilename()
                 except Exception:
                     self._model_path = ""
+                self._hwnd = self._find_window_for_pid(pid)
                 return True
             else:
                 self._error = f"Could not attach to {software} (PID {pid})."
@@ -235,6 +242,8 @@ class EtabsConnection:
             self._etabs = None
             self._model_path = ""
             self._version = ""
+            self._pid = None
+            self._hwnd = 0
             return False
 
     @property
@@ -252,9 +261,84 @@ class EtabsConnection:
             self._version = ""
         return self._version
 
+    def activate_window(self) -> bool:
+        """Bring the connected ETABS window to the foreground when possible."""
+        if not self._connected:
+            return False
+
+        try:
+            import win32con
+            import win32gui
+        except Exception:
+            return False
+
+        hwnd = self._hwnd
+        if not hwnd and self._pid:
+            hwnd = self._find_window_for_pid(self._pid)
+        if not hwnd:
+            self._remember_connected_instance()
+            hwnd = self._hwnd
+        if not hwnd:
+            return False
+
+        try:
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            else:
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+            win32gui.SetForegroundWindow(hwnd)
+            self._hwnd = hwnd
+            return True
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------
     def _ensure_api_path(self):
         """Add etabs_api directory to ``sys.path`` if not already there."""
         p = str(self._api_path)
         if p not in sys.path:
             sys.path.insert(0, p)
+
+    def _remember_connected_instance(self):
+        """Best-effort capture of the attached ETABS PID / window handle."""
+        try:
+            instances = self.list_instances(self._software)
+        except Exception:
+            return
+
+        if self._pid:
+            for inst in instances:
+                if inst.get("pid") == self._pid:
+                    self._hwnd = inst.get("hwnd", 0) or 0
+                    return
+
+        if len(instances) == 1:
+            inst = instances[0]
+            self._pid = inst.get("pid")
+            self._hwnd = inst.get("hwnd", 0) or 0
+
+    def _find_window_for_pid(self, pid: int) -> int:
+        """Return the first visible top-level window for *pid*."""
+        try:
+            import win32gui
+            import win32process
+        except Exception:
+            return 0
+
+        hwnd_found = 0
+
+        def _enum_cb(hwnd, _):
+            nonlocal hwnd_found
+            if hwnd_found:
+                return
+            if not win32gui.IsWindowVisible(hwnd):
+                return
+            _, hwnd_pid = win32process.GetWindowThreadProcessId(hwnd)
+            if hwnd_pid == pid and win32gui.GetWindowText(hwnd):
+                hwnd_found = hwnd
+
+        try:
+            win32gui.EnumWindows(_enum_cb, None)
+        except Exception:
+            return 0
+        return hwnd_found
