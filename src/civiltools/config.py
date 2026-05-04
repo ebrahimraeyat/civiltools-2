@@ -57,6 +57,10 @@ _DEFAULTS = {
     "report_format": "both",
     "font_name": "B Nazanin",
     "recent_files": [],
+    # Log panel — leave empty to use the default e-mail action.
+    # Telegram: https://api.telegram.org/bot<TOKEN>/sendDocument?chat_id=<ID>
+    # Discord:  https://discord.com/api/webhooks/<id>/<token>
+    "webhook_url": "",
 }
 
 

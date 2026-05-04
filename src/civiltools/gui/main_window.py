@@ -24,7 +24,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QToolBar, QMessageBox,
-    QApplication, QLabel,
+    QApplication, QLabel, QDockWidget, QInputDialog,
 )
 
 from civiltools import __version__, __app_name__
@@ -38,6 +38,7 @@ from civiltools.gui.connect_dialog import ConnectDialog
 from civiltools.gui.param_dialog import ParamDialog
 from civiltools.gui.icons import icon, COMMAND_ICONS, APP_ICON, CONNECT_ICON, REPORT_ICON, QUIT_ICON, HELP_ICON
 from civiltools.gui.busy_dialog import BusyDialog
+from civiltools.gui.log_widget import LogWidget, app_log
 
 
 # Map command's table_model string → actual model class
@@ -98,6 +99,19 @@ class MainWindow(QMainWindow):
         welcome.setStyleSheet("padding: 40px; font-size: 14px;")
         self._tabs.addTab(welcome, "Welcome")
 
+        # ── Log panel (bottom dock) ─────────────────────────────────
+        self._log_widget = LogWidget(settings=self._settings, parent=self)
+        log_dock = QDockWidget("Log", self)
+        log_dock.setObjectName("LogDock")
+        log_dock.setWidget(self._log_widget)
+        log_dock.setAllowedAreas(
+            Qt.DockWidgetArea.BottomDockWidgetArea
+            | Qt.DockWidgetArea.TopDockWidgetArea
+        )
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, log_dock)
+        app_log.attach(self._log_widget)
+        app_log.info(f"{__app_name__} {__version__} started")
+
         # ── Help panel (right dock) — optional ──────────────────────
         try:
             from civiltools.help.help_engine import HelpEngine
@@ -127,6 +141,9 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().addPermanentWidget(self._conn_label)
         self.statusBar().showMessage("Ready — connect to ETABS to begin")
+
+        # Add Tools → Settings: Webhook URL entry
+        # (handled via existing settings dialog or inline in Help > About)
 
         # ── 10-second polling timer ────────────────────────────────
         self._poll_busy: bool = False   # guard against re-entrancy
@@ -207,6 +224,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Connected to {self._conn.software}{ver_str} — {model}"
             )
+            app_log.info(f"Connected to {self._conn.software}{ver_str}: {model}")
         else:
             self._conn_label.setText("  Not connected  ")
             self._conn_label.setStyleSheet(
@@ -235,6 +253,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     "ETABS connection lost — File → Connect to Software to reconnect"
                 )
+                app_log.warning("ETABS connection lost")
                 return
             # Update status bar only when something changed
             if self._conn.model_path != prev_path:
@@ -272,7 +291,8 @@ class MainWindow(QMainWindow):
         self._poll_busy = True   # prevent COM re-entrancy from the 10s timer
         try:
             if cmd_class.dialog_class:
-                result = self._run_dialog_command(cmd_class)
+                with app_log.capture_output(cmd_class.label):
+                    result = self._run_dialog_command(cmd_class)
                 if result is None:
                     return  # user cancelled
             else:
@@ -287,11 +307,14 @@ class MainWindow(QMainWindow):
 
                 self.statusBar().showMessage(f"Running {cmd_class.label}…")
                 QApplication.processEvents()
+                app_log.info(f"Running: {cmd_class.label}")
 
                 try:
-                    with BusyDialog(cmd_class.label, parent=self):
-                        result = cmd_class.execute(self._conn.etabs, user_params)
+                    with BusyDialog(cmd_class.label, parent=self) as dlg:
+                        with app_log.capture_output(cmd_class.label):
+                            result = dlg.run(lambda: cmd_class.execute(self._conn.etabs, user_params))
                 except Exception as exc:
+                    app_log.error(f"{cmd_class.label} failed: {exc}")
                     QMessageBox.critical(
                         self,
                         "Command Error",
@@ -307,6 +330,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{cmd_class.label} — {'OK' if result.ok else 'Issues found'}"
         )
+        if result.ok:
+            app_log.info(f"{cmd_class.label} — completed OK")
+        else:
+            app_log.warning(
+                f"{cmd_class.label} — completed with issues: "
+                + (result.summary or result.error or "see results tab")
+            )
 
     def _run_dialog_command(self, cmd_class) -> CommandResult | None:
         """Instantiate and show a .ui-based dialog, return its result."""
@@ -318,11 +348,23 @@ class MainWindow(QMainWindow):
 
         dlg = dlg_cls(self._conn.etabs, parent=self)
         if dlg.exec() == dlg.DialogCode.Accepted:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+
             # Some dialogs produce a secondary result (e.g. drift "Show Separate")
             result_y = getattr(dlg, "result_y", None)
             if result_y is not None:
                 self._add_result_tab(result_y, cmd_class)
-            return dlg.result
+
+            result = dlg.result
+            if result is None and self._tabs.count():
+                self._tabs.setCurrentIndex(0)
+
+            if getattr(dlg, "bring_etabs_to_front_after_accept", False):
+                self._conn.activate_window()
+
+            return result
         return None
 
     # ── Menu creation ───────────────────────────────────────────────
@@ -374,6 +416,14 @@ class MainWindow(QMainWindow):
         act_report.setShortcut("Ctrl+R")
         act_report.triggered.connect(self._generate_report)
 
+        tools_menu.addSeparator()
+        act_webhook = tools_menu.addAction("\U0001f517  Configure &Webhook URL\u2026")
+        act_webhook.setToolTip(
+            "Set a Telegram or Discord webhook URL for sending logs.\n"
+            "Leave blank to use the default e-mail method."
+        )
+        act_webhook.triggered.connect(self._configure_webhook)
+
         # ── Help ────────────────────────────────────────────────────
         help_menu = mb.addMenu("&Help")
         if self.help_panel:
@@ -415,7 +465,32 @@ class MainWindow(QMainWindow):
                 lambda checked=False, cid=cmd_id: self._run_command(cid)
             )
             tb.addAction(act)
+    # ── Webhook configuration ─────────────────────────────────────
 
+    def _configure_webhook(self):
+        """
+        Let the user enter a Telegram or Discord webhook URL.
+        Stored in Settings under the key ``webhook_url``.
+        Examples
+        --------
+        Telegram : https://api.telegram.org/bot<TOKEN>/sendDocument?chat_id=<ID>
+        Discord  : https://discord.com/api/webhooks/<id>/<token>
+        """
+        current = self._settings.get("webhook_url", "")
+        text, ok = QInputDialog.getText(
+            self,
+            "Configure Webhook URL",
+            "Enter Telegram or Discord webhook URL\n"
+            "(leave blank to use the default e-mail action):",
+            text=current,
+        )
+        if not ok:
+            return
+        self._settings.set("webhook_url", text.strip())
+        if text.strip():
+            app_log.info(f"Webhook URL configured: {text.strip()[:40]}…")
+        else:
+            app_log.info("Webhook URL cleared — will use e-mail for log sending")
     # ── Report ──────────────────────────────────────────────────────
 
     def _generate_report(self):
