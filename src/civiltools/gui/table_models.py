@@ -405,6 +405,12 @@ class StructureModel(QAbstractTableModel):
         super().__init__()
         self.build = build
 
+    def set_rows(self, build):
+        """Refresh model with a new Building instance without recreating the view/model."""
+        self.beginResetModel()
+        self.build = build
+        self.endResetModel()
+
     def rowCount(self, parent=QModelIndex()):
         return 12
 
