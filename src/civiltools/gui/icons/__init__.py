@@ -72,6 +72,7 @@ COMMAND_ICONS: dict[str, str] = {
     "offset": "offset.svg",
     "create_25percent": "create_25percent_file.svg",
     "extract_rebars": "rebars.svg",
+    "copy_elements_between_models": "transfer_loads_between_two_files.svg",
 }
 
 # Special icons for app-level use

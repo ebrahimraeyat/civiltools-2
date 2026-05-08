@@ -30,3 +30,17 @@ class OffsetCommand(BaseCommand):
     @classmethod
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
         return CommandResult(title="Offset", ok=True)
+
+
+@register
+class CopyElementsCommand(BaseCommand):
+    command_id = "copy_elements_between_models"
+    label = "Copy Elements Between Models"
+    menu_path = "Tools"
+    tooltip = "Copy beams/columns from source ETABS model to target ETABS model"
+    dialog_class = "civiltools.gui.dialogs.copy_elements_dialog.CopyElementsDialog"
+    requires_etabs = False
+
+    @classmethod
+    def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        return CommandResult(title="Copy Elements", ok=True)

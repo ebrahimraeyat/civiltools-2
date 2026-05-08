@@ -44,7 +44,7 @@ def _get_etabs_api_path() -> Path:
         candidate = Path(sp) / "etabs_api"
         if candidate.exists():
             return candidate
-    return ""  # Not found
+    return Path()  # Not found
 
 class EtabsConnection:
     """Manages a single ETABS COM session."""
@@ -219,6 +219,48 @@ class EtabsConnection:
                 self._error = f"Could not attach to {software} (PID {pid})."
                 self._connected = False
                 return False
+        except Exception as exc:
+            self._error = str(exc)
+            self._connected = False
+            return False
+
+    def connect_file(self, model_path: str | Path, software: str = "ETABS") -> bool:
+        """Start a new software instance and open *model_path*.
+
+        Returns *True* on success.
+        """
+        self._software = software
+        self._error = ""
+        self._ensure_api_path()
+
+        path = Path(model_path)
+        if not path.exists() or path.suffix.lower() != ".edb":
+            self._error = f"Invalid EDB file: {path}"
+            self._connected = False
+            return False
+
+        try:
+            from etabs_api import etabs_obj  # noqa: E402
+
+            etabs = etabs_obj.EtabsModel(
+                attach_to_instance=False,
+                backup=False,
+                software=software,
+                model_path=str(path),
+            )
+            if etabs.success and hasattr(etabs, "SapModel"):
+                self._etabs = etabs
+                self._connected = True
+                self._version = ""
+                self._model_path = str(path)
+                self._pid = None
+                self._hwnd = 0
+                self._remember_connected_instance()
+                return True
+
+            self._error = f"Could not open model file: {path}"
+            self._connected = False
+            return False
         except Exception as exc:
             self._error = str(exc)
             self._connected = False
