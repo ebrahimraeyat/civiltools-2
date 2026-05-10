@@ -16,12 +16,12 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, Signal
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QCheckBox, QTableView, QHeaderView,
-    QFileDialog, QMessageBox, QApplication,
+    QFileDialog, QMessageBox, QApplication, QSplitter, QTextEdit,
 )
 
 from civiltools.gui.table_models import PandasModel
@@ -29,6 +29,9 @@ from civiltools.gui.table_models import PandasModel
 
 class ResultWidget(QWidget):
     """Main result display — mirrors civilTools ``table_model.ResultWidget``."""
+
+    #: Emitted when a table row is selected; carries the source DataFrame row index.
+    selection_changed = Signal(int)
 
     def __init__(
         self,
@@ -83,13 +86,32 @@ class ResultWidget(QWidget):
 
         main_layout.addLayout(filter_bar)
 
-        # Table view
+        # Table + detail pane in a vertical splitter
+        self._splitter = QSplitter(Qt.Orientation.Vertical)
+
         self._table = QTableView()
         self._table.setSortingEnabled(True)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
-        main_layout.addWidget(self._table)
+        self._splitter.addWidget(self._table)
+
+        # Bottom pane: a horizontal QSplitter that holds
+        #   [detail text | (optional right panel added via add_right_panel())]
+        self._bottom_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._bottom_splitter.hide()  # shown only when __detail__ column is present
+
+        self._detail_pane = QTextEdit()
+        self._detail_pane.setReadOnly(True)
+        self._detail_pane.setPlaceholderText("Select a row to see calculation details…")
+        self._detail_pane.setFontFamily("Courier New")
+        self._bottom_splitter.addWidget(self._detail_pane)
+
+        self._splitter.addWidget(self._bottom_splitter)
+        self._splitter.setStretchFactor(0, 3)
+        self._splitter.setStretchFactor(1, 1)
+
+        main_layout.addWidget(self._splitter)
 
         # Summary bar
         self._summary_lbl = QLabel()
@@ -106,9 +128,23 @@ class ResultWidget(QWidget):
         )
         self._table.horizontalHeader().setStretchLastSection(True)
 
-        # Populate column combo
+        # Populate column combo (skip hidden system columns)
         for col_name in self._model.df.columns:
-            self._col_combo.addItem(str(col_name))
+            if not str(col_name).startswith("__"):
+                self._col_combo.addItem(str(col_name))
+
+        # Hide any __ system columns from the visible table
+        for col_name in self._model.df.columns:
+            if str(col_name).startswith("__"):
+                idx = self._model.df.columns.get_loc(col_name)
+                self._table.setColumnHidden(idx, True)
+
+        # If a __detail__ column exists: show detail pane
+        self._detail_col = "__detail__"
+        if self._detail_col in self._model.df.columns:
+            self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+            self._bottom_splitter.show()
+            # connect after model is set (done below)
 
         # Summary
         if summary:
@@ -128,6 +164,37 @@ class ResultWidget(QWidget):
         # Ctrl+C shortcut
         sc = QShortcut(QKeySequence.StandardKey.Copy, self._table)
         sc.activated.connect(self.copy_to_clipboard)
+
+        # Connect row-click detail pane (after model is assigned)
+        if self._detail_col in self._model.df.columns:
+            self._table.selectionModel().selectionChanged.connect(self._on_row_selected)
+
+    # ── Public API for extending the bottom panel ───────────────────
+
+    def add_right_panel(self, widget: QWidget) -> None:
+        """
+        Add a widget to the right of the detail text pane.
+        The bottom splitter is shown automatically.
+        """
+        self._bottom_splitter.addWidget(widget)
+        self._bottom_splitter.setStretchFactor(0, 1)  # detail text
+        self._bottom_splitter.setStretchFactor(
+            self._bottom_splitter.count() - 1, 1
+        )  # right panel
+        self._bottom_splitter.show()
+
+    # ── Detail pane slot ────────────────────────────────────────────
+
+    def _on_row_selected(self):
+        indexes = self._table.selectionModel().selectedRows()
+        if not indexes:
+            self._detail_pane.clear()
+            return
+        source_idx = self._proxy.mapToSource(indexes[0])
+        df_row = source_idx.row()
+        detail_text = self._model.df.iloc[df_row].get(self._detail_col, "")
+        self._detail_pane.setPlainText(str(detail_text))
+        self.selection_changed.emit(df_row)
 
     # ── Filter slots ────────────────────────────────────────────────
 
