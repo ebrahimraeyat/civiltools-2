@@ -26,6 +26,114 @@ from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QToolBar, QMessageBox,
     QApplication, QLabel, QDockWidget, QInputDialog,
 )
+from civiltools.gui.toggle_button import Switch
+
+_DARK_STYLESHEET = """
+QMainWindow, QDialog, QWidget {
+    background: #202124;
+    color: #e8eaed;
+}
+QMenuBar {
+    background: #2b2d31;
+    color: #e8eaed;
+}
+QMenuBar::item:selected {
+    background: #3c4043;
+}
+QMenu {
+    background: #2b2d31;
+    color: #e8eaed;
+    border: 1px solid #3c4043;
+}
+QMenu::item:selected {
+    background: #1e88e5;
+}
+QToolBar {
+    background: #2b2d31;
+    border-bottom: 1px solid #3c4043;
+}
+QStatusBar {
+    background: #2b2d31;
+    color: #e8eaed;
+}
+QTabWidget::pane {
+    border: 1px solid #3c4043;
+    background: #202124;
+}
+QTabBar::tab {
+    background: #2b2d31;
+    color: #e8eaed;
+    padding: 6px 12px;
+    border: 1px solid #3c4043;
+}
+QTabBar::tab:selected {
+    background: #1e88e5;
+    color: white;
+}
+QGroupBox, QTreeWidget, QTableWidget, QTextEdit, QScrollArea, QListWidget {
+    background: #2b2d31;
+    color: #e8eaed;
+}
+QHeaderView::section {
+    background: #3c4043;
+    color: white;
+}
+QPushButton {
+    background: #3c4043;
+    color: white;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: none;
+}
+QPushButton:hover {
+    background: #4e5358;
+}
+QPushButton:disabled {
+    background: #2b2d31;
+    color: #666;
+}
+QComboBox {
+    background: #3c4043;
+    color: #e8eaed;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 3px 6px;
+}
+QComboBox QAbstractItemView {
+    background: #2b2d31;
+    color: #e8eaed;
+    selection-background-color: #1e88e5;
+}
+QLineEdit, QSpinBox, QDoubleSpinBox {
+    background: #3c4043;
+    color: #e8eaed;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 3px;
+}
+QCheckBox, QRadioButton {
+    color: #e8eaed;
+    padding: 3px;
+}
+QProgressBar {
+    border: 1px solid #555;
+    border-radius: 4px;
+    text-align: center;
+    color: white;
+}
+QProgressBar::chunk {
+    background: #1e88e5;
+}
+QDockWidget {
+    color: #e8eaed;
+}
+QDockWidget::title {
+    background: #2b2d31;
+}
+QSplitter::handle {
+    background: #3c4043;
+}
+"""
 
 from civiltools import __version__, __app_name__
 from civiltools.config import Settings
@@ -141,6 +249,20 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().addPermanentWidget(self._conn_label)
         self.statusBar().showMessage("Ready — connect to ETABS to begin")
+
+        # ── Dark/Light theme toggle in status bar ───────────────────
+        _theme_label = QLabel("  ☀  ")
+        _theme_label.setToolTip("Light / Dark theme")
+        self._theme_switch = Switch(track_radius=9, thumb_radius=7)
+        self._theme_switch.setChecked(self._settings.get("dark_theme", False))
+        self._theme_switch.setToolTip("Toggle dark / light theme")
+        self._theme_switch.toggled.connect(self._apply_theme)
+        _dark_label = QLabel("  🌙  ")
+        self.statusBar().addPermanentWidget(_theme_label)
+        self.statusBar().addPermanentWidget(self._theme_switch)
+        self.statusBar().addPermanentWidget(_dark_label)
+        # Apply saved theme on start
+        self._apply_theme(self._settings.get("dark_theme", False))
 
         # Add Tools → Settings: Webhook URL entry
         # (handled via existing settings dialog or inline in Help > About)
@@ -452,7 +574,8 @@ class MainWindow(QMainWindow):
         # Key command buttons (subset — full list in menus)
         toolbar_cmds = [
             "settings", "earthquake_factor", "torsion", "drift",
-            "joint_shear", "design_columns", "columns_control", "dynamic_scale", "live_load"
+            "joint_shear", "design_columns", "columns_control", "dynamic_scale", "live_load",
+            "controls_input",
         ]
         for cmd_id in toolbar_cmds:
             cmd_cls = REGISTRY.get(cmd_id)
@@ -539,6 +662,16 @@ class MainWindow(QMainWindow):
             "<p>Standalone replacement for the FreeCAD-based civilTools "
             "workbench.</p>",
         )
+
+    # ── Theme ───────────────────────────────────────────────────────
+
+    def _apply_theme(self, dark: bool) -> None:
+        app = QApplication.instance()
+        if dark:
+            app.setStyleSheet(_DARK_STYLESHEET)
+        else:
+            app.setStyleSheet("")
+        self._settings.set("dark_theme", dark)
 
     def closeEvent(self, event):  # noqa: N802
         self._poll_timer.stop()

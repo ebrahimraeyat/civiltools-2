@@ -73,6 +73,7 @@ COMMAND_ICONS: dict[str, str] = {
     "create_25percent": "create_25percent_file.svg",
     "extract_rebars": "rebars.svg",
     "copy_elements_between_models": "transfer_loads_between_two_files.svg",
+    "controls_input": "checklist_pdf_control.svg",
 }
 
 # Special icons for app-level use

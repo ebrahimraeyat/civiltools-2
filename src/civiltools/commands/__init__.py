@@ -34,6 +34,7 @@ from civiltools.commands import (  # noqa: E402, F401
     beam_deflection,
     columns_100_30,
     columns_control,
+    controls_input,
     high_pressure_columns,
     story_forces,
     diaphragm_forces,
