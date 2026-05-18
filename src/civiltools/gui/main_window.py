@@ -509,7 +509,7 @@ class MainWindow(QMainWindow):
 
         # ── Dynamic menus from REGISTRY ─────────────────────────────
         # Menu order matches civilTools: Edit, Control, Assign, Define, Tools, Shear Wall
-        menu_order = ["Edit", "Control", "Assign", "Define", "Tools", "Shear Wall"]
+        menu_order = ["Edit", "Control", "Assign", "Define", "Tools", "Shear Wall", "Wind"]
         menus: dict[str, Any] = {}
         for menu_name in menu_order:
             menu_cmds = [

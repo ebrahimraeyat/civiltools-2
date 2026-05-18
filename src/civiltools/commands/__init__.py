@@ -52,6 +52,8 @@ from civiltools.commands import (  # noqa: E402, F401
     extract_rebars,
     # ── Shear Wall ──────────────────────────────────────────────
     shearwall_commands,
+    # ── Wind ────────────────────────────────────────────────────
+    wind_commands,
 )
 
 __all__ = ["BaseCommand", "CommandResult", "REGISTRY", "register"]
