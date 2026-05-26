@@ -22,11 +22,11 @@ from civiltools.report.data_extractor import FrameInfo
 
 # ── Colours ──────────────────────────────────────────────────────────────
 BEAM_COLOR = "#334155"        # slate-700
-BEAM_WIDTH = 1.4
+BEAM_WIDTH = 1.6
 COL_COLOR = "#1e3a5f"         # dark navy
-COL_MARKER = 6                # marker size in points
+COL_MARKER = 8                # marker size in points
 LABEL_COLOR = "#1a1a1a"
-LABEL_SIZE = 5.0
+LABEL_SIZE = 7.0              # increased from 5.0 for legibility
 TITLE_SIZE = 10
 BG_COLOR = "white"
 GRID_ALPHA = 0.1

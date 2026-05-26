@@ -9,6 +9,7 @@ active section to a styled Word document.
 from __future__ import annotations
 
 import io
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -134,10 +135,62 @@ def _add_image(doc: Document, img_bytes: bytes, width_inches: float = 6.0):
     doc.add_paragraph()
 
 
+def _clean_latex_cell(s: str) -> str:
+    """Strip simple LaTeX markup for use in a plain text table cell."""
+    s = re.sub(r'\\text\{([^}]*)\}', r'\1', s)   # \text{...} → ...
+    s = re.sub(r'\\mathrm\{([^}]*)\}', r'\1', s)  # \mathrm{...} → ...
+    s = re.sub(r'_\{([^}]+)\}', r'_\1', s)        # _{0} → _0
+    s = re.sub(r'\\[a-zA-Z]+', '', s)              # remaining \cmds
+    s = s.replace('{', '').replace('}', '')
+    return s.strip()
+
+
+def _try_render_array_as_table(doc: Document, latex: str) -> bool:
+    """If *latex* contains a LaTeX array/tabular, render it as a Word table.
+
+    Returns True on success so the caller can skip the image renderer.
+    """
+    m = re.search(
+        r'\\begin\{(?:array|tabular)\}\{[^}]*\}(.*?)\\end\{(?:array|tabular)\}',
+        latex, re.DOTALL,
+    )
+    if not m:
+        return False
+
+    content = m.group(1)
+    # Rows are separated by \\
+    row_strs = re.split(r'\\\\', content)
+    rows: list[list[str]] = []
+    for rs in row_strs:
+        rs = rs.replace(r'\hline', '').strip()
+        if not rs:
+            continue
+        cells = [_clean_latex_cell(c) for c in rs.split('&')]
+        rows.append(cells)
+
+    if len(rows) < 2:
+        return False
+
+    try:
+        _add_data_table(doc, rows[0], rows[1:])
+        return True
+    except Exception:
+        return False
+
+
 def _add_formula_section(doc: Document, steps: list[tuple[str, str]]):
-    """Add LaTeX formulas rendered as images, with plain-text fallback."""
+    """Add LaTeX formulas rendered as images, with plain-text fallback.
+
+    Steps containing a LaTeX array/tabular environment are rendered as
+    proper Word tables instead of images (matplotlib cannot render
+    ``\\begin{array}`` in inline-math mode).
+    """
     for desc, latex in steps:
         doc.add_paragraph(desc, style="Heading 3")
+        # Prefer Word-table rendering for array environments
+        if r'\begin{array}' in latex or r'\begin{tabular}' in latex:
+            if _try_render_array_as_table(doc, latex):
+                continue
         try:
             img_bytes = _render_latex_to_png(latex)
             stream = io.BytesIO(img_bytes)
@@ -176,7 +229,22 @@ def _section_model_settings(doc: Document, data: ReportData, lang: str):
     doc.add_heading("Model Settings", level=1)
     ms = data.model_settings
     if not ms:
-        doc.add_paragraph(get_string("NOT_AVAILABLE", lang))
+        doc.add_paragraph(
+            "Model settings JSON not found. "
+            "Please ensure that the model has been opened and saved at least once "
+            "from the civilTools interface so that the settings file is generated "
+            "in the table_results folder next to the ETABS model."
+        )
+        if data.building:
+            doc.add_heading("Available Data from Building Object", level=2)
+            b = data.building
+            rows = [
+                ("Soil Type", _en_soil(getattr(b, "soil_type", ""))),
+                ("Risk Level", _en_risk(getattr(b, "risk_level", ""))),
+                ("Importance Factor", str(getattr(b, "importance_factor", ""))),
+                ("Height (m)", str(getattr(b, "height", ""))),
+            ]
+            _add_kv_table(doc, [(k, v) for k, v in rows if v])
         return
 
     # ── 1. Project Information ────────────────────────────────────────
@@ -407,10 +475,13 @@ def _add_checkbox_table(doc: Document, items: list[tuple[str, bool]]):
 def _section_project_info(doc: Document, data: ReportData, lang: str):
     doc.add_heading(get_string("PROJECT_INFO", lang), level=1)
     b = data.building
+    # Prefer reading story count from model settings (avoids ETABS off-by-one)
+    ms = data.model_settings or {}
+    no_stories = ms.get("no_of_story_x") or len(data.stories)
     rows = [
         (get_string("PROJECT_INFO", lang), data.project_name),
         (get_string("CITY", lang), data.location),
-        (get_string("NO_STORIES", lang), str(len(data.stories))),
+        (get_string("NO_STORIES", lang), str(no_stories)),
         (get_string("HEIGHT_METER", lang), f"{data.total_height:.1f}"),
     ]
     if b:
@@ -673,7 +744,8 @@ def _section_story_plans(doc: Document, data: ReportData, lang: str):
         img = data.story_plan_images.get(story)
         if img:
             doc.add_heading(f"Story: {story}", level=2)
-            _add_image(doc, img, width_inches=6.0)
+            # Use full page width so all elements are legible
+            _add_image(doc, img, width_inches=6.3)
 
 
 def _section_area_loads(doc: Document, data: ReportData, lang: str):
@@ -690,23 +762,47 @@ def _section_area_loads(doc: Document, data: ReportData, lang: str):
         img = data.area_load_images.get(story)
         if img:
             doc.add_heading(f"Story: {story}", level=2)
-            _add_image(doc, img, width_inches=6.0)
+            _add_image(doc, img, width_inches=6.3)
 
-            # Per-story load set table
+            # Per-story load set table — sorted by pattern count (ascending)
+            # so simpler load sets appear first and comparison is easy.
             story_areas = data.area_data.get(story, [])
             story_sets = sorted({a.load_set for a in story_areas})
             if story_sets and data.load_set_defs:
                 headers = ["Load Set", "Load Patterns (kg/m\u00b2)"]
-                rows = []
-                for sname in story_sets:
+                # Priority order for load pattern display inside each set
+                _PATTERN_ORDER = [
+                    "DEAD", "DL", "SDL", "SDEAD", "PARTITION",
+                    "LIVE", "LL", "LRED", "PARKING",
+                    "LROOF", "ROOF",
+                    "MASS",
+                    "SNOW", "S",
+                    "EV", "SEISMIC",
+                ]
+
+                def _pattern_sort_key(p: str) -> tuple:
+                    pl = p.upper()
+                    for rank, known in enumerate(_PATTERN_ORDER):
+                        if pl.startswith(known):
+                            return (rank, pl)
+                    return (len(_PATTERN_ORDER), pl)
+
+                def _fmt_loads(lsd) -> str:
+                    if not lsd:
+                        return ""
+                    items = sorted(lsd.loads.items(), key=lambda kv: _pattern_sort_key(kv[0]))
+                    return ", ".join(f"{p} = {v:.0f}" for p, v in items)
+
+                # Sort load sets: fewer load patterns first
+                def _set_sort_key(sname: str):
                     lsd = data.load_set_defs.get(sname)
-                    if lsd:
-                        desc = ", ".join(
-                            f"{p} = {v:.0f}" for p, v in lsd.loads.items()
-                        )
-                    else:
-                        desc = ""
-                    rows.append([sname, desc])
+                    n = len(lsd.loads) if lsd else 0
+                    return (n, sname)
+
+                rows = []
+                for sname in sorted(story_sets, key=_set_sort_key):
+                    lsd = data.load_set_defs.get(sname)
+                    rows.append([sname, _fmt_loads(lsd)])
                 _add_data_table(doc, headers, rows)
 
 
@@ -796,6 +892,18 @@ def create_docx_report(
         doc.add_heading(get_string("TABLE_OF_CONTENTS", lang), level=1)
         _add_table_of_contents(doc)
         doc.add_page_break()
+
+    # ── Filter load combinations to design-active only ────────────────
+    if (getattr(config, "filter_active_combinations", True)
+            and data.design_combo_names
+            and data.load_combinations is not None
+            and not data.load_combinations.empty):
+        mask = data.load_combinations["Name"].isin(data.design_combo_names)
+        if mask.any():
+            data = data.__class__(**{
+                **{f.name: getattr(data, f.name) for f in data.__dataclass_fields__.values()},
+                "load_combinations": data.load_combinations[mask].reset_index(drop=True),
+            })
 
     # ── Sections ──────────────────────────────────────────────────────
     for section_key in config.active_sections:

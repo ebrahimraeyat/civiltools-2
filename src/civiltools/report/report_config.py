@@ -17,9 +17,6 @@ from typing import Any
 
 DEFAULT_SECTION_ORDER: list[str] = [
     "model_settings",
-    "project_info",
-    "structural_system",
-    "seismic_params",
     "earthquake_formulation",
     "earthquake_values",
     "load_combinations",
@@ -74,6 +71,8 @@ class ReportConfig:
     include_table_of_contents: bool = True
     include_page_numbers: bool = True
     font_name: str = "B Nazanin"
+    # App-level preference: show only design-active load combinations
+    filter_active_combinations: bool = True
 
     # ── Properties ────────────────────────────────────────────────────
 

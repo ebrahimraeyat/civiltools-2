@@ -111,7 +111,8 @@ def render_area_load_plan(
             else:
                 cx = (f.x1 + f.x2) / 2
                 cy = (f.y1 + f.y2) / 2
-                ax.plot(cx, cy, "s", color="#c0c0c0", markersize=3, zorder=1)
+                # Larger marker so columns are visible on area load plans
+                ax.plot(cx, cy, "s", color="#404040", markersize=6, zorder=3)
 
     # ── Draw area polygons ────────────────────────────────────────────
     for area in areas:
@@ -155,18 +156,43 @@ def render_area_load_plan(
 
     # ── Coloured table below the plan ─────────────────────────────────
     ax_table.axis("off")
+
+    # Standard pattern display order (DL → SDL → Live → Roof → Mass → EV)
+    _PATTERN_PRIORITY = [
+        "DEAD", "DL", "SDL", "SDEAD", "PARTITION",
+        "LIVE", "LL", "LRED", "PARKING",
+        "LROOF", "ROOF",
+        "MASS",
+        "SNOW", "S",
+        "EV", "SEISMIC",
+    ]
+
+    def _pattern_key(p: str) -> tuple:
+        pl = p.upper()
+        for rank, known in enumerate(_PATTERN_PRIORITY):
+            if pl.startswith(known):
+                return (rank, pl)
+        return (len(_PATTERN_PRIORITY), pl)
+
+    def _fmt_loads(lsd) -> str:
+        if not lsd:
+            return ""
+        items = sorted(lsd.loads.items(), key=lambda kv: _pattern_key(kv[0]))
+        return ", ".join(f"{p} = {v:.0f}" for p, v in items)
+
+    # Sort load sets by number of patterns (ascending) so simpler sets come first
+    def _set_sort(name: str):
+        lsd = load_set_defs.get(name)
+        return (len(lsd.loads) if lsd else 0, name)
+
+    sorted_sets = sorted(unique_sets, key=_set_sort)
+
     table_data = []
     cell_colors = []
-    for name in unique_sets:
+    for name in sorted_sets:
         color = set_colors[name]
         lsd = load_set_defs.get(name)
-        if lsd:
-            patterns = ", ".join(
-                f"{p} = {v:.0f}" for p, v in lsd.loads.items()
-            )
-        else:
-            patterns = ""
-        table_data.append([name, f"{patterns} kg/m\u00b2"])
+        table_data.append([name, f"{_fmt_loads(lsd)} kg/m\u00b2"])
         cell_colors.append([color, "#ffffff"])
 
     if table_data:

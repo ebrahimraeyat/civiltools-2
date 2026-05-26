@@ -103,6 +103,9 @@ class ReportData:
     # ── Model settings from JSON ──────────────────────────────────────
     model_settings: dict | None = None
 
+    # ── Design-active combination names (from ETABS design module) ────
+    design_combo_names: set | None = None
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Main extraction entry point
@@ -202,7 +205,7 @@ def _get_table_results_dir(data: ReportData) -> Path | None:
 
 
 def _find_json_file(data: ReportData, *keywords: str) -> Path | None:
-    """Find a JSON file in the table_results dir matching any keyword."""
+    """Find a JSON file in the table_results dir matching ANY keyword."""
     tr = _get_table_results_dir(data)
     if tr is None:
         return None
@@ -211,6 +214,18 @@ def _find_json_file(data: ReportData, *keywords: str) -> Path | None:
         for kw in keywords:
             if kw.lower() in name_lower:
                 return f
+    return None
+
+
+def _find_json_file_all(data: ReportData, *keywords: str) -> Path | None:
+    """Find a JSON file in the table_results dir matching ALL keywords."""
+    tr = _get_table_results_dir(data)
+    if tr is None:
+        return None
+    for f in sorted(tr.glob("*.json")):
+        name_lower = f.stem.lower()
+        if all(kw.lower() in name_lower for kw in keywords):
+            return f
     return None
 
 
@@ -259,25 +274,44 @@ def _load_json_table(filepath: Path) -> pd.DataFrame | None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _extract_model_settings(data: ReportData):
-    """Load model_settings.json from the table_results directory."""
+    """Load model_settings.json from the table_results directory or model dir."""
+    candidates: list[Path] = []
+
+    # Primary location: table_results directory
     tr = _get_table_results_dir(data)
-    if tr is None:
-        return
-    settings_file = tr / f"{data.model_stem}_model_settings.json"
-    if not settings_file.exists():
-        # Try any file matching *model_settings*
-        candidates = list(tr.glob("*model_settings*.json"))
-        if candidates:
-            settings_file = candidates[0]
+    if tr is not None:
+        stem_file = tr / f"{data.model_stem}_model_settings.json"
+        if stem_file.exists():
+            candidates.append(stem_file)
         else:
-            return
-    try:
-        raw = json.loads(settings_file.read_text(encoding="utf-8"))
-        if isinstance(raw, dict):
-            data.model_settings = raw
-            log.info("Loaded model settings from %s", settings_file.name)
-    except Exception as exc:
-        log.warning("Could not load model settings: %s", exc)
+            candidates.extend(tr.glob("*model_settings*.json"))
+
+    # Fallback: model directory itself
+    if data.model_dir:
+        candidates.extend(data.model_dir.glob("*model_settings*.json"))
+
+    # Remove duplicates while preserving order
+    seen: set[Path] = set()
+    unique_candidates = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            unique_candidates.append(c)
+
+    for settings_file in unique_candidates:
+        try:
+            raw = json.loads(settings_file.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and raw:
+                data.model_settings = raw
+                log.info("Loaded model settings from %s", settings_file.name)
+                return
+        except Exception as exc:
+            log.warning("Could not load model settings from %s: %s", settings_file.name, exc)
+
+    log.warning(
+        "model_settings.json not found. Searched: %s",
+        [str(c) for c in unique_candidates] or ["None"],
+    )
 
 
 def _extract_project_info(etabs, building, data: ReportData):
@@ -311,11 +345,38 @@ def _extract_project_info(etabs, building, data: ReportData):
 
 
 def _extract_load_combinations(etabs, data: ReportData):
-    """Load combination table."""
+    """Load combination table + design-active combination names."""
     try:
         data.load_combinations = etabs.load_combinations.get_table_of_load_combinations()
     except Exception as exc:
         log.warning("Could not read load combinations: %s", exc)
+
+    # Try to get which combinations are used in design
+    design_names: set[str] = set()
+    for design_module in ("DesignConcrete", "DesignSteel", "DesignAluminum", "DesignColdFormed"):
+        for method in ("GetComboStrength", "GetComboDeflection",
+                       "GetComboSeismic", "GetComboSpecial"):
+            try:
+                mdl = getattr(etabs.SapModel, design_module, None)
+                if mdl is None:
+                    continue
+                fn = getattr(mdl, method, None)
+                if fn is None:
+                    continue
+                result = fn()
+                # result is typically (number, names_tuple, ret_code)
+                if isinstance(result, (list, tuple)) and len(result) >= 2:
+                    names = result[1]
+                    if isinstance(names, (list, tuple)):
+                        design_names.update(str(n) for n in names if n)
+                elif isinstance(result, str) and result:
+                    design_names.add(result)
+            except Exception:
+                continue
+
+    if design_names:
+        data.design_combo_names = design_names
+        log.info("Found %d design-active combinations", len(design_names))
 
 
 def _extract_drift(etabs, building, data: ReportData):
@@ -380,7 +441,9 @@ def _extract_story_forces(etabs, data: ReportData):
 
 def _extract_pmm(etabs, data: ReportData):
     """Column PMM design results — JSON first, then API fallback."""
-    jf = _find_json_file(data, "pmm", "column")
+    # NOTE: do NOT include 'column' as keyword — it would match columns_control.json
+    # which contains section names instead of PMM ratios.
+    jf = _find_json_file(data, "pmm")
     if jf:
         df = _load_json_table(jf)
         if df is not None and not df.empty:
@@ -398,7 +461,9 @@ def _extract_pmm(etabs, data: ReportData):
 
 def _extract_joint_shear(data: ReportData):
     """Joint shear check — JSON only (no live API equivalent)."""
-    jf = _find_json_file(data, "joint", "shear")
+    # Require BOTH keywords in the filename to avoid accidentally picking
+    # up a dynamic_scale or other table that contains only one word.
+    jf = _find_json_file_all(data, "joint", "shear")
     if jf:
         df = _load_json_table(jf)
         if df is not None and not df.empty:
