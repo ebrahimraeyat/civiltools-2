@@ -118,7 +118,9 @@ def _add_data_table(doc: Document, headers: list[str], rows: list[list]):
     for r_idx, row in enumerate(rows):
         for c_idx, val in enumerate(row):
             table.cell(r_idx + 1, c_idx).text = str(val)
+    _format_table_font(table, body_size=9.0, header_size=9.5)
     doc.add_paragraph()
+    return table
 
 
 def _add_df_table(doc: Document, df, max_rows: int = 500):
@@ -199,6 +201,188 @@ def _add_formula_section(doc: Document, steps: list[tuple[str, str]]):
             # Fallback: plain text
             p = doc.add_paragraph()
             p.add_run(latex).font.name = "Consolas"
+
+
+def _latex_to_inline_text(latex: str) -> str:
+    """Convert simple LaTeX expressions to compact inline text."""
+    text = latex.strip()
+
+    if r"\begin{array}" in text or r"\begin{tabular}" in text:
+        text = re.sub(r"\\begin\{(?:array|tabular)\}\{[^}]*\}", "", text)
+        text = re.sub(r"\\end\{(?:array|tabular)\}", "", text)
+        text = text.replace(r"\hline", "")
+        text = re.sub(r"\\\\", " ; ", text)
+        text = text.replace("&", ", ")
+
+    while True:
+        updated = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)", text)
+        if updated == text:
+            break
+        text = updated
+
+    replacements = {
+        r"\times": "×",
+        r"\cdot": "×",
+        r"\geq": "≥",
+        r"\leq": "≤",
+        r"\Rightarrow": "⇒",
+        r"\checkmark": "✓",
+        r"\quad": " ",
+        r"\,": " ",
+        r"\;": " ",
+        r"\!": "",
+        r"\left": "",
+        r"\right": "",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    text = re.sub(r"\\text\{([^}]*)\}", r"\1", text)
+    text = re.sub(r"\\mathrm\{([^}]*)\}", r"\1", text)
+    text = re.sub(r"_\{([^}]*)\}", r"_\1", text)
+    text = re.sub(r"\^\{([^}]*)\}", r"^\1", text)
+    text = text.replace("{", "").replace("}", "")
+    text = re.sub(r"\\[A-Za-z]+", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _format_table_font(table, body_size: float = 8.0, header_size: float = 8.5):
+    """Apply compact font/spacing to a Word table."""
+    for row_idx, row in enumerate(table.rows):
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.space_before = Pt(0)
+                paragraph.paragraph_format.space_after = Pt(0)
+                paragraph.paragraph_format.line_spacing = 1.0
+                for run in paragraph.runs:
+                    run.font.name = "Calibri"
+                    run.font.size = Pt(header_size if row_idx == 0 else body_size)
+                    if row_idx == 0:
+                        run.bold = True
+
+
+def _add_formula_summary_table(doc: Document, rows: list[list[str]]):
+    """Add a compact 3-column table for earthquake calculations."""
+    headers = ["Parameter", "Formula", "Substitution / Result"]
+    table = doc.add_table(rows=1 + len(rows), cols=3)
+    table.style = "Light Shading Accent 1"
+    table.autofit = False
+
+    for col_idx, header in enumerate(headers):
+        table.cell(0, col_idx).text = header
+
+    for row_idx, row in enumerate(rows, start=1):
+        for col_idx, value in enumerate(row):
+            table.cell(row_idx, col_idx).text = str(value)
+
+    table.columns[0].width = Inches(1.35)
+    table.columns[1].width = Inches(2.05)
+    table.columns[2].width = Inches(2.80)
+    _format_table_font(table, body_size=8.0, header_size=8.5)
+    doc.add_paragraph()
+
+
+def _build_earthquake_formula_rows(params: dict[str, Any], direction: str) -> list[list[str]]:
+    """Build compact earthquake-calculation rows for a 3-column table."""
+    try:
+        from civiltools.report.latex_str import (
+            b1_with_values,
+            b_with_values,
+            c_check_with_values,
+            c_min_with_values,
+            design_period_with_values,
+            earthquake_c_with_values,
+            k_with_values,
+            n_with_values,
+            period_with_values,
+        )
+    except ImportError:
+        return []
+
+    d = direction.lower()
+    A = params.get("A", 0.3)
+    I_ = params.get("I", 1.0)
+    R = params.get(f"R{d}", params.get("R", 7.0))
+    T_emp = params.get(f"T{d}", 0.5)
+    T_an = params.get(f"T{d}_an", 0.6)
+    T_design = params.get(f"T{d}_design", T_emp)
+    B1 = params.get(f"B1{d}", 2.5)
+    N = params.get(f"N{d}", 1.0)
+    B = params.get(f"B{d}", 2.5)
+    K = params.get(f"K{d}", 1.0)
+    C = params.get(f"C{d}", 0.1)
+    alpha = params.get("alpha", params.get("Ct", 0.07))
+    beta = params.get("beta", 0.75)
+    H = params.get("H", params.get("height", 10.0))
+    soil_type = params.get("soil_type", "III")
+    T0 = params.get("T0", 0.15)
+    Ts = params.get("Ts", 0.70)
+    S = params.get("S", 1.75)
+    S0 = params.get("S0", 1.75)
+    is_high = params.get("risk_level", 3) >= 3
+    is_infill = params.get("is_infill", False)
+
+    C_min = 0.12 * A * I_
+    C_final = max(C, C_min)
+    n_formula = (
+        "N = 1 / (0.7T/Ts)^0.4 / 1.3"
+        if is_high else
+        "N = 1 / (0.7T/Ts)^0.5 / 1.45"
+    )
+
+    return [
+        [
+            "Empirical period T_emp",
+            "T_emp = 0.8×α×H^β" if is_infill else "T_emp = α×H^β",
+            _latex_to_inline_text(period_with_values(alpha, beta, H, T_emp, is_infill)),
+        ],
+        [
+            "Design period T",
+            "T = max(T_emp, min(T_an, 1.25×T_emp))",
+            _latex_to_inline_text(design_period_with_values(T_emp, T_an, T_design)),
+        ],
+        [
+            "Soil parameters",
+            "Lookup from soil type table",
+            f"Soil {soil_type}: T0={T0}, Ts={Ts}, S={S}, S0={S0}",
+        ],
+        [
+            "Reflection coefficient B1",
+            "B1 = piecewise(T, T0, Ts, S, S0)",
+            _latex_to_inline_text(b1_with_values(T_design, T0, Ts, S, S0, B1)),
+        ],
+        [
+            "N coefficient",
+            n_formula,
+            _latex_to_inline_text(n_with_values(T_design, Ts, N, is_high)),
+        ],
+        [
+            "Reflection factor B",
+            "B = B1×N",
+            _latex_to_inline_text(b_with_values(B1, N, B)),
+        ],
+        [
+            "Distribution exponent K",
+            "K = 1 / (0.5T + 0.75) / 2",
+            _latex_to_inline_text(k_with_values(T_design, K)),
+        ],
+        [
+            "Base coefficient C",
+            "C = A×B×I / R",
+            _latex_to_inline_text(earthquake_c_with_values(A, B, I_, R, C)),
+        ],
+        [
+            "Minimum coefficient C_min",
+            "C_min = 0.12×A×I",
+            _latex_to_inline_text(c_min_with_values(A, I_, C_min)),
+        ],
+        [
+            "Final design coefficient",
+            "C_design = max(C, C_min)",
+            _latex_to_inline_text(c_check_with_values(C, C_min, C_final)),
+        ],
+    ]
 
 
 def _render_latex_to_png(latex_str: str, dpi: int = 150, fontsize: int = 14) -> bytes:
@@ -290,7 +474,8 @@ def _section_model_settings(doc: Document, data: ReportData, lang: str):
         _add_kv_table(doc, [(k, str(v)) for k, v in rw_rows if v])
 
     # ── 3. Structural System (Primary) ────────────────────────────────
-    _sys_label = "Structural System" if not ms.get("activate_second_system") else "Structural System (Lower)"
+    is_dual = bool(ms.get("activate_second_system"))
+    _sys_label = "Structural System" if not is_dual else "Structural System (Lower)"
     doc.add_heading(_sys_label, level=2)
     sys_rows = [
         ("X System", ms.get("x_system_name", "")),
@@ -303,15 +488,15 @@ def _section_model_settings(doc: Document, data: ReportData, lang: str):
         ("Cd (Y)", str(ms.get("cdy", ""))),
         ("Bottom Story", ms.get("bot_x_combo", "")),
         ("Top Story", ms.get("top_x_combo", "")),
-        ("Top Story for Height", ms.get("top_story_for_height", "")),
-        ("Number of Stories", str(ms.get("no_of_story_x", ""))),
+        *(([("Top Story for Height", ms.get("top_story_for_height", ""))]) if not is_dual else []),
+        ("Number of Stories", str(ms.get("no_of_story_x", "") or ms.get("no_of_story", ""))),
         ("Building Height (m)", str(ms.get("height_x", ""))),
         ("Infill Panel", "Yes" if ms.get("infill") else "No"),
     ]
     _add_kv_table(doc, [(k, v) for k, v in sys_rows if v and v != "None"])
 
     # ── 4. Structural System (Secondary) ──────────────────────────────
-    if ms.get("activate_second_system"):
+    if is_dual:
         doc.add_heading("Structural System (Upper)", level=2)
         sys2_rows = [
             ("X System", ms.get("x_system_name_1", "")),
@@ -354,7 +539,7 @@ def _section_model_settings(doc: Document, data: ReportData, lang: str):
     _add_kv_table(doc, [(k, str(v)) for k, v in rho_rows if v])
 
     # Second system earthquake load cases
-    if ms.get("activate_second_system"):
+    if is_dual:
         doc.add_heading("Static EQ Load Cases (Upper System)", level=3)
         eq2_rows = [
             ["EQ without Eccentricity", ms.get("ex1_combobox", ""), ms.get("ey1_combobox", "")],
@@ -393,7 +578,7 @@ def _section_model_settings(doc: Document, data: ReportData, lang: str):
         ("T analytical X (s)", str(ms.get("tx_an", ""))),
         ("T analytical Y (s)", str(ms.get("ty_an", ""))),
     ]
-    if ms.get("activate_second_system"):
+    if is_dual:
         period_rows.extend([
             ("T analytical X - upper (s)", str(ms.get("tx1_an", ""))),
             ("T analytical Y - upper (s)", str(ms.get("ty1_an", ""))),
@@ -477,7 +662,11 @@ def _section_project_info(doc: Document, data: ReportData, lang: str):
     b = data.building
     # Prefer reading story count from model settings (avoids ETABS off-by-one)
     ms = data.model_settings or {}
-    no_stories = ms.get("no_of_story_x") or len(data.stories)
+    no_stories = (
+        ms.get("no_of_story_x")
+        or ms.get("no_of_story")
+        or len(data.stories)
+    )
     rows = [
         (get_string("PROJECT_INFO", lang), data.project_name),
         (get_string("CITY", lang), data.location),
@@ -556,49 +745,109 @@ def _section_seismic_params(doc: Document, data: ReportData, lang: str):
 
 
 def _section_earthquake_formulation(doc: Document, data: ReportData, lang: str):
+    """Earthquake coefficient formulation in compact 3-column tables."""
     doc.add_heading(get_string("EARTHQUAKE_COEFFICIENT_CALC", lang), level=1)
     b = data.building
     if not b:
         doc.add_paragraph(get_string("NOT_AVAILABLE", lang))
         return
 
-    try:
-        from civiltools.report.latex_str import full_earthquake_calculation
-        sp = _building_to_seismic_dict(b, "x")
-        if sp:
-            doc.add_heading(get_string("X_DIRECTION", lang), level=2)
-            steps = full_earthquake_calculation(sp, "x")
-            _add_formula_section(doc, steps)
-    except Exception:
-        doc.add_paragraph("Earthquake formulas could not be generated.")
+    is_dual = b.building2 is not None
+    sys_label = "Structural System (Lower)" if is_dual else "Structural System"
+
+    # ── Lower / only system ───────────────────────────────────────
+    doc.add_heading(sys_label, level=2)
+    for direction in ("x", "y"):
+        try:
+            sp = _building_to_seismic_dict(b, direction)
+            if sp:
+                doc.add_heading(
+                    get_string(direction.upper() + "_DIRECTION", lang), level=3
+                )
+                rows = _build_earthquake_formula_rows(sp, direction)
+                if rows:
+                    _add_formula_summary_table(doc, rows)
+        except Exception:
+            pass
+
+    # ── Upper system (dual system only) ────────────────────────────
+    if is_dual:
+        doc.add_heading("Structural System (Upper)", level=2)
+        for direction in ("x", "y"):
+            try:
+                sp2 = _building_to_seismic_dict(b.building2, direction)
+                if sp2:
+                    doc.add_heading(
+                        get_string(direction.upper() + "_DIRECTION", lang), level=3
+                    )
+                    rows = _build_earthquake_formula_rows(sp2, direction)
+                    if rows:
+                        _add_formula_summary_table(doc, rows)
+            except Exception:
+                pass
+
+        # ── Combined system (using combined period) ──────────────────
+        doc.add_heading("Combined System (Overall Height)", level=2)
+        for direction in ("x", "y"):
+            try:
+                sp_all = _building_all_to_seismic_dict(b, direction)
+                if sp_all:
+                    doc.add_heading(
+                        get_string(direction.upper() + "_DIRECTION", lang), level=3
+                    )
+                    rows = _build_earthquake_formula_rows(sp_all, direction)
+                    if rows:
+                        _add_formula_summary_table(doc, rows)
+            except Exception:
+                pass
 
 
 def _section_earthquake_values(doc: Document, data: ReportData, lang: str):
-    doc.add_heading("Earthquake Coefficient Values", level=1)
+    """Coefficient summary table for all systems and directions."""
+    doc.add_heading("Earthquake Coefficient Summary", level=1)
     b = data.building
     if not b:
         doc.add_paragraph(get_string("NOT_AVAILABLE", lang))
         return
 
-    try:
-        from civiltools.report.latex_str import full_earthquake_calculation
-        sp = _building_to_seismic_dict(b, "y")
-        if sp:
-            doc.add_heading(get_string("Y_DIRECTION", lang), level=2)
-            steps = full_earthquake_calculation(sp, "y")
-            _add_formula_section(doc, steps)
-    except Exception:
-        doc.add_paragraph("Earthquake formulas could not be generated.")
+    is_dual = b.building2 is not None
 
-    # Summary table
-    if b and hasattr(b, "results") and b.results:
-        _, cx, cy = b.results
-        doc.add_heading("Coefficient Summary", level=2)
-        rows = [
-            ["X", f"{cx:.4f}"],
-            ["Y", f"{cy:.4f}"],
-        ]
-        _add_data_table(doc, ["Direction", "C (Earthquake Coefficient)"], rows)
+    headers = ["System", "Direction", "C (Design Coefficient)"]
+    rows = []
+
+    def _cx_cy(results):
+        if results and results[0] is True:
+            _, cx, cy = results
+            return cx, cy
+        return None, None
+
+    if is_dual:
+        # Lower system — individual period
+        cx, cy = _cx_cy(getattr(b, "results", None))
+        if cx: rows.append(["Lower", "X", f"{cx:.4f}"])
+        if cy: rows.append(["Lower", "Y", f"{cy:.4f}"])
+        # Combined period — lower portion
+        cx, cy = _cx_cy(getattr(b, "results_all_bot", None))
+        if cx: rows.append(["Lower (combined T)", "X", f"{cx:.4f}"])
+        if cy: rows.append(["Lower (combined T)", "Y", f"{cy:.4f}"])
+        # Combined period — upper portion
+        cx, cy = _cx_cy(getattr(b, "results_all_top", None))
+        if cx: rows.append(["Upper (combined T)", "X", f"{cx:.4f}"])
+        if cy: rows.append(["Upper (combined T)", "Y", f"{cy:.4f}"])
+        # Upper system — individual period
+        b2 = b.building2
+        cx2, cy2 = _cx_cy(getattr(b2, "results", None))
+        if cx2: rows.append(["Upper", "X", f"{cx2:.4f}"])
+        if cy2: rows.append(["Upper", "Y", f"{cy2:.4f}"])
+    else:
+        cx, cy = _cx_cy(getattr(b, "results", None))
+        if cx: rows.append(["System", "X", f"{cx:.4f}"])
+        if cy: rows.append(["System", "Y", f"{cy:.4f}"])
+
+    if rows:
+        _add_data_table(doc, headers, rows)
+    else:
+        doc.add_paragraph(get_string("NOT_AVAILABLE", lang))
 
 
 def _section_load_combinations(doc: Document, data: ReportData, lang: str):
@@ -634,7 +883,11 @@ def _section_load_combinations(doc: Document, data: ReportData, lang: str):
         formula = " + ".join(parts).replace("+ -", "- ")
         rows.append([name, formula])
 
-    _add_data_table(doc, ["Combination", "Definition"], rows)
+    table = _add_data_table(doc, ["Combination", "Definition"], rows)
+    table.autofit = False
+    table.columns[0].width = Inches(1.55)
+    table.columns[1].width = Inches(4.65)
+    _format_table_font(table, body_size=8.5, header_size=9.0)
 
 
 def _section_story_forces(doc: Document, data: ReportData, lang: str):
@@ -862,6 +1115,22 @@ def create_docx_report(
     """
     config = config or ReportConfig(language="en")
     lang = config.language if config.language != "both" else "en"
+
+    if output_path is None:
+        stem = (data.project_name or "report").replace(" ", "_")
+        output_path = Path(f"{stem}_report.docx")
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        try:
+            with output_path.open("ab"):
+                pass
+        except PermissionError as exc:
+            raise PermissionError(
+                f"Cannot write the Word report because the file is open or locked: {output_path}\n"
+                f"Please close it in Word and try again."
+            ) from exc
+
     doc = _create_styled_doc(config)
 
     # ── Title page ────────────────────────────────────────────────────
@@ -917,11 +1186,6 @@ def create_docx_report(
             doc.add_page_break()
 
     # ── Save ──────────────────────────────────────────────────────────
-    if output_path is None:
-        stem = (data.project_name or "report").replace(" ", "_")
-        output_path = Path(f"{stem}_report.docx")
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(output_path))
     return output_path
 
@@ -986,6 +1250,73 @@ def _building_to_seismic_dict(building, direction: str) -> dict | None:
 
     if hasattr(building, "results") and building.results and building.results[0] is True:
         _, cx, cy = building.results
+        sp["Cx"] = cx
+        sp["Cy"] = cy
+        sp[f"C{d}"] = cx if d == "x" else cy
+
+    return sp
+
+
+def _building_all_to_seismic_dict(building, direction: str) -> dict | None:
+    """Build seismic params dict using the *combined* period for dual systems.
+
+    Uses ``tx_all`` / ``ty_all`` (combined period from both portions) and the
+    lower-system structural parameters so the report can show the governing
+    base-shear calculation for the overall building.
+
+    Returns None if ``building.building2`` does not exist (single system).
+    """
+    if building is None or not hasattr(building, "building2") or building.building2 is None:
+        return None
+
+    d = direction.lower()
+    sys = getattr(building, f"{d}_system", None)
+    acc = getattr(building, "acc", 0)
+
+    sp = {
+        "soil_type": getattr(building, "soil_type", ""),
+        "A": acc,
+        "I": getattr(building, "importance_factor", 1),
+        "zone": getattr(building, "risk_level", ""),
+        "risk_level": 3 if acc >= 0.3 else (2 if acc >= 0.25 else 1),
+        "T0": getattr(getattr(building, "soil_properties", None), "T0", 0),
+        "Ts": getattr(getattr(building, "soil_properties", None), "Ts", 0),
+        "S": getattr(getattr(building, "soil_properties", None), "S", 0),
+        "S0": getattr(getattr(building, "soil_properties", None), "S0", 0),
+        # Use full combined height (lower + upper)
+        "H": getattr(building, "height", 0) + getattr(building.building2, "height", 0),
+        "height": getattr(building, "height", 0) + getattr(building.building2, "height", 0),
+        "is_infill": getattr(building, "is_infill", False),
+    }
+
+    if sys:
+        sp["alpha"] = getattr(sys, "alpha", 0)
+        sp["Ct"] = getattr(sys, "alpha", 0)
+        sp["beta"] = getattr(sys, "pow", 0.75)
+        sp[f"R{d}"] = getattr(sys, "Ru", 0)
+
+    # Use combined-period values
+    t_all = getattr(building, f"t{d}_all", getattr(building, f"t{d}", 0))
+    sp[f"T{d}"] = t_all
+    sp[f"T{d}_exp"] = getattr(building, f"t{d}_exp_all", getattr(building, f"t{d}_exp", 0))
+    sp[f"T{d}_an"] = getattr(building, f"t{d}_an_all", getattr(building, f"t{d}_an", 0))
+    sp[f"T{d}_design"] = t_all
+
+    refl_all = getattr(building, f"soil_reflection_prop_all_{d}", None)
+    if refl_all:
+        sp[f"B1{d}"] = getattr(refl_all, "B1", 0)
+        sp[f"N{d}"] = getattr(refl_all, "N", 1)
+    else:
+        sp[f"B1{d}"] = 0
+        sp[f"N{d}"] = 1
+
+    sp[f"B{d}"] = getattr(building, f"b{d}_all", 0)
+    sp[f"K{d}"] = getattr(building, f"k{d}_all", 0)
+    sp[f"C{d}"] = 0
+
+    res = getattr(building, f"results_all_bot", None)
+    if res and res[0] is True:
+        _, cx, cy = res
         sp["Cx"] = cx
         sp["Cy"] = cy
         sp[f"C{d}"] = cx if d == "x" else cy
