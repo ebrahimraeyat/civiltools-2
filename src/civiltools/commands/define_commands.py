@@ -43,3 +43,16 @@ class CreateSectionCutsCommand(BaseCommand):
     @classmethod
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
         return CommandResult(title="Section Cuts", ok=True)
+
+
+@register
+class RenameConcreteSectionsCommand(BaseCommand):
+    command_id = "rename_concrete_sections"
+    label = "Rename Concrete Sections"
+    menu_path = "Define"
+    tooltip = "Preview and rename rectangular concrete beam/column sections by pattern"
+    dialog_class = "civiltools.gui.dialogs.rename_concrete_sections_dialog.RenameConcreteSectionsDialog"
+
+    @classmethod
+    def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        return CommandResult(title="Rename Concrete Sections", ok=True)

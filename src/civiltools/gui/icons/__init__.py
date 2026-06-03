@@ -68,6 +68,7 @@ COMMAND_ICONS: dict[str, str] = {
     "create_load_combinations": "load_combination.svg",
     "create_spectral": "spectral.svg",
     "create_section_cuts": "cut.svg",
+    "rename_concrete_sections": "frame_sections.svg",
     "match_property": "match_property.svg",
     "offset": "offset.svg",
     "create_25percent": "create_25percent_file.svg",
