@@ -43,7 +43,7 @@ import pythoncom        # noqa: E402
 # ---------------------------------------------------------------------------
 
 # All AutoCAD representations of the diameter symbol
-_DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ])'
+_DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ~T])'
 
 # Combined main rebar in one text:  4∅20@25 … L=1200cm
 RE_COMBINED_MAIN = re.compile(
