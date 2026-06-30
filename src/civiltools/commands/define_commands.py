@@ -20,6 +20,19 @@ class CreateLoadCombinationsCommand(BaseCommand):
 
 
 @register
+class CreateMaterialsCommand(BaseCommand):
+    command_id = "create_materials"
+    label = "Create Materials"
+    menu_path = "Define"
+    tooltip = "Create concrete and rebar materials in the model"
+    dialog_class = "civiltools.gui.dialogs.create_materials_dialog.CreateMaterialsDialog"
+
+    @classmethod
+    def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        return CommandResult(title="Create Materials", ok=True)
+
+
+@register
 class CreateSpectralCommand(BaseCommand):
     command_id = "create_spectral"
     label = "Response Spectrum"
