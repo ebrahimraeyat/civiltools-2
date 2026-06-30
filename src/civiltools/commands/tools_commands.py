@@ -44,3 +44,16 @@ class CopyElementsCommand(BaseCommand):
     @classmethod
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
         return CommandResult(title="Copy Elements", ok=True)
+
+
+@register
+class DistanceCommand(BaseCommand):
+    command_id = "distance"
+    label = "Distance Between Points"
+    menu_path = "Tools"
+    tooltip = "Measure distance between two selected points (or the ends of a frame)"
+    dialog_class = "civiltools.gui.dialogs.distance_dialog.DistanceDialog"
+
+    @classmethod
+    def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        return CommandResult(title="Distance", ok=True)
