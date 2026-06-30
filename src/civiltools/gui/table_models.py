@@ -271,7 +271,10 @@ class JointShearBCCModel(PandasModel):
         super().__init__(df.copy(), kwargs)
         cols = list(self.df.columns)
         self.ratio_cols = set()
-        for name in ('JSMajRatio', 'JSMinRatio', 'BCMajRatio', 'BCMinRatio'):
+        for name in (
+            'JSMajRatio', 'JSMinRatio', 'BCMajRatio', 'BCMinRatio',
+            'Ratio', 'Ratio_JS (ETABS)', 'Ratio_BC (ETABS)',
+        ):
             if name in cols:
                 self.ratio_cols.add(cols.index(name))
 

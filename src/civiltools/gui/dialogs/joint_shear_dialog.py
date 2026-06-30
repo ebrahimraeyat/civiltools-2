@@ -38,23 +38,40 @@ class _Worker(QThread):
     finished = Signal(object)   # pd.DataFrame
     errored  = Signal(str)      # traceback string
 
-    def __init__(self, etabs, ductility: str, lambda_: float, cover_mm: float, parent=None):
+    def __init__(self, etabs, mode: str, structure_type: str, ductility: str,
+                 lambda_: float, cover_mm: float, parent=None):
         super().__init__(parent)
         self._etabs    = etabs
+        self._mode     = mode               # "etabs" | "software" | "both"
+        self._structure_type = structure_type
         self._ductility = ductility
         self._lambda    = lambda_
         self._cover_mm  = cover_mm
 
     def run(self):
         try:
-            from etabs_api.joint_shear import JointShearChecker
-            checker = JointShearChecker(
-                self._etabs,
-                ductility=self._ductility,
-                lambda_=self._lambda,
-                cover_mm=self._cover_mm,
-            )
-            df = checker.run()
+            if self._mode == "etabs":
+                # Native ETABS joint-shear / beam-column-capacity ratios.
+                self._etabs.save()
+                df = self._etabs.create_joint_shear_bcc_file(
+                    file_name="jsbc",
+                    structure_type=self._structure_type,
+                    open_main_file=True,
+                    create_file=True,
+                )
+            else:
+                # Software calculation (ACI 318-19 §18.8); run() also merges
+                # the ETABS ratio columns into the same table.
+                from etabs_api.joint_shear import JointShearChecker
+                checker = JointShearChecker(
+                    self._etabs,
+                    ductility=self._ductility,
+                    lambda_=self._lambda,
+                    cover_mm=self._cover_mm,
+                )
+                df = checker.run()
+            if df is None:
+                df = pd.DataFrame()
             self.finished.emit(df)
         except Exception:
             self.errored.emit(traceback.format_exc())
@@ -106,6 +123,18 @@ class JointShearDialog(QDialog):
         params_group = QGroupBox("Parameters")
         form = QFormLayout(params_group)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._source_combo = QComboBox()
+        self._source_combo.addItems(
+            ["ETABS only", "Software only", "Both (software + ETABS)"]
+        )
+        self._source_combo.setCurrentIndex(2)
+        self._source_combo.setToolTip(
+            "ETABS only: fast — native ETABS joint-shear / BCC ratios.\n"
+            "Software only: civilTools ACI 318-19 §18.8 calculation.\n"
+            "Both: software calculation with the ETABS ratios side by side."
+        )
+        form.addRow("Results source:", self._source_combo)
 
         self._ductility_combo = QComboBox()
         self._ductility_combo.addItems(["Intermediate (IMF)", "High (SMF)"])
@@ -194,10 +223,22 @@ class JointShearDialog(QDialog):
 
         ductility_text = self._ductility_combo.currentText()
         ductility = "high" if "High" in ductility_text else "intermediate"
+        structure_type = "Sway Special" if ductility == "high" else "Sway Intermediate"
         lambda_   = self._lambda_spin.value()
         cover_mm  = float(self._cover_spin.value())
 
-        self._worker = _Worker(self._etabs, ductility, lambda_, cover_mm, parent=self)
+        source_text = self._source_combo.currentText()
+        if source_text.startswith("ETABS"):
+            mode = "etabs"
+        elif source_text.startswith("Software"):
+            mode = "software"
+        else:
+            mode = "both"
+        self._mode = mode
+
+        self._worker = _Worker(
+            self._etabs, mode, structure_type, ductility, lambda_, cover_mm, parent=self
+        )
         self._worker.finished.connect(self._on_finished)
         self._worker.errored.connect(self._on_error)
         self._worker.start()
@@ -206,15 +247,49 @@ class JointShearDialog(QDialog):
         self._progress.hide()
         self._run_btn.setEnabled(True)
 
-        if df.empty:
+        if df is None or df.empty:
             self._status_lbl.setText("⚠ No results (no qualifying joints found).")
             return
 
-        ng_count = int((df["Status"] == "NG").sum()) if "Status" in df.columns else 0
-        ok_count = int((df["Status"] == "OK").sum()) if "Status" in df.columns else 0
-        total    = len(df)
-        all_ok   = ng_count == 0
-        summary  = f"Total: {total}  |  ✓ OK: {ok_count}  |  ✗ NG: {ng_count}"
+        mode = getattr(self, "_mode", "both")
+
+        # Software-only: hide the merged ETABS ratio columns.
+        if mode == "software":
+            df = df[[c for c in df.columns if "(ETABS)" not in c]]
+
+        title = {
+            "etabs": "Joint Shear — ETABS",
+            "software": "Joint Shear — ACI 318-19 §18.8 (software)",
+            "both": "Joint Shear — software + ETABS",
+        }.get(mode, "Joint Shear")
+
+        # Summary + pass/fail depend on the data shape.
+        if "Status" in df.columns:
+            ng_count = int((df["Status"] == "NG").sum())
+            ok_count = int((df["Status"] == "OK").sum())
+            all_ok   = ng_count == 0
+            summary  = f"Total: {len(df)}  |  ✓ OK: {ok_count}  |  ✗ NG: {ng_count}"
+        else:
+            # ETABS table: NG when any JS/BC ratio > 1.
+            ratio_cols = [
+                c for c in df.columns
+                if any(k in c for k in ("JSMaj", "JSMin", "BCMaj", "BCMin"))
+            ]
+            ng_count = 0
+            max_ratio = 0.0
+            if ratio_cols:
+                vals = df[ratio_cols].apply(pd.to_numeric, errors="coerce")
+                ng_count = int((vals > 1.0).any(axis=1).sum())
+                try:
+                    max_ratio = float(vals.max().max())
+                except (ValueError, TypeError):
+                    max_ratio = 0.0
+            all_ok  = ng_count == 0
+            summary = (
+                f"Total: {len(df)}  |  ✗ Exceeding 1.0: {ng_count}  |  "
+                f"Max ratio: {max_ratio:.3f}"
+            )
+
         self._status_lbl.setText(summary)
         self._df = df  # keep reference for row-selection callback
 
@@ -226,16 +301,17 @@ class JointShearDialog(QDialog):
         result_widget = ResultWidget(
             df=df,
             model_class=model_cls,
-            title="Joint Shear — ACI 318-19 §18.8",
+            title=title,
             summary=summary,
             ok=all_ok,
         )
 
-        # ── Joint plan view (right side of detail pane) ─────────────────
-        from civiltools.gui.joint_plan_widget import JointPlanWidget
-        self._plan_widget = JointPlanWidget()
-        result_widget.add_right_panel(self._plan_widget)
-        result_widget.selection_changed.connect(self._on_joint_selected)
+        # Joint plan view — only the software check carries joint geometry.
+        if "__geometry__" in df.columns:
+            from civiltools.gui.joint_plan_widget import JointPlanWidget
+            self._plan_widget = JointPlanWidget()
+            result_widget.add_right_panel(self._plan_widget)
+            result_widget.selection_changed.connect(self._on_joint_selected)
 
         layout = self._results_container.layout()
         old = layout.itemAt(0)
