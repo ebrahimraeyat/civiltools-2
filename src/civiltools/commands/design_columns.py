@@ -41,6 +41,23 @@ class DesignColumnsCheck(BaseCommand):
                 error="No column design data. Run concrete design first.",
             )
 
+        # The raw "Concrete Column Design Summary" table has several rows per
+        # column (one per station / governing combo).  Collapse to a single row
+        # per column keeping the governing (max) PMM ratio — this matches the
+        # original ColumnsPMMAll behaviour; without it the table shows many
+        # duplicate rows per column.
+        group_cols = [
+            c for c in ("Story", "Label", "UniqueName", "DesignSect")
+            if c in df.columns
+        ]
+        if group_cols and "PMMRatio" in df.columns:
+            try:
+                df["PMMRatio"] = df["PMMRatio"].astype(float)
+                idx = df.groupby(group_cols)["PMMRatio"].idxmax()
+                df = df.loc[idx].reset_index(drop=True)
+            except (ValueError, TypeError, KeyError):
+                pass
+
         # Check max PMM ratio
         pmm_max = 0.0
         if "PMMRatio" in df.columns:
