@@ -50,6 +50,7 @@ from civiltools.commands import (  # noqa: E402, F401
     define_axes,
     # ── Tools ───────────────────────────────────────────────────
     tools_commands,
+    backups,
     extract_rebars,
     slab_rebar_plan,
     # ── Shear Wall ──────────────────────────────────────────────
