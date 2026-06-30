@@ -56,3 +56,28 @@ class WallLoadCommand(BaseCommand):
     @classmethod
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
         return CommandResult(title="Wall Load", ok=True)
+
+
+@register
+class UpdateWallLoadCommand(BaseCommand):
+    command_id = "update_wall_load"
+    label = "Update Wall Loads"
+    menu_path = "Assign"
+    tooltip = "Recompute and update gravity wall loads on all beams"
+
+    @classmethod
+    def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        try:
+            beams, _ = etabs.frame_obj.get_beams_columns(types=range(10))
+            etabs.frame_obj.update_gravity_loads_from_wall(beams)
+        except Exception as exc:
+            return CommandResult(
+                title="Update Wall Loads",
+                ok=False,
+                error=f"Failed to update wall loads: {exc}",
+            )
+        return CommandResult(
+            title="Update Wall Loads",
+            ok=True,
+            summary="All wall loads recomputed and updated on beams.",
+        )
