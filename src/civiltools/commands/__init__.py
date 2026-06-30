@@ -38,6 +38,7 @@ from civiltools.commands import (  # noqa: E402, F401
     high_pressure_columns,
     story_forces,
     diaphragm_forces,
+    irregularity_of_mass,
     # ── Assign ──────────────────────────────────────────────────
     earthquake_factor,
     beam_j,

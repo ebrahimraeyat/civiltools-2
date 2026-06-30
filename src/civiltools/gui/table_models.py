@@ -113,6 +113,57 @@ class TorsionModel(PandasModel):
 
 
 # =====================================================================
+#  Mass Irregularity Model
+# =====================================================================
+
+class IrregularityOfMassModel(PandasModel):
+    """Vertical mass irregularity — story mass > 1.5× adjacent story = fail."""
+
+    HEADERS = ['Story', 'Mass (tonf)', '1.5 * Below', '1.5 * Above']
+
+    def __init__(self, df: pd.DataFrame, kwargs=None):
+        cols = [c for c in self.HEADERS if c in df.columns]
+        super().__init__(df[cols].copy() if cols else df.copy(), kwargs)
+        headers = list(self.df.columns)
+        self.i_story = headers.index('Story') if 'Story' in headers else -1
+        self.i_mass = headers.index('Mass (tonf)') if 'Mass (tonf)' in headers else -1
+        self.i_below = headers.index('1.5 * Below') if '1.5 * Below' in headers else -1
+        self.i_above = headers.index('1.5 * Above') if '1.5 * Above' in headers else -1
+
+    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if self.data(index, Qt.ItemDataRole.BackgroundRole) is not None:
+                return QColor(0, 0, 0)
+            return None
+        row, col = index.row(), index.column()
+        value = self.df.iat[row, col]
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            if col == self.i_story:
+                return str(value)
+            try:
+                return f"{float(value):.2f}"
+            except (ValueError, TypeError):
+                return str(value)
+
+        if role == Qt.ItemDataRole.BackgroundRole and self.i_mass >= 0:
+            if col in (self.i_below, self.i_above):
+                try:
+                    mass = float(self.df.iat[row, self.i_mass])
+                    limit = float(self.df.iat[row, col])
+                except (ValueError, TypeError):
+                    return None
+                return QColor(*HIGH) if mass > limit else QColor(*LOW)
+            return None
+
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+        return None
+
+
+# =====================================================================
 #  Drift Model
 # =====================================================================
 

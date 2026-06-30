@@ -153,6 +153,7 @@ from civiltools.gui.log_widget import LogWidget, app_log
 _MODEL_MAP: dict[str, type] = {
     "PandasModel": table_models.PandasModel,
     "TorsionModel": table_models.TorsionModel,
+    "IrregularityOfMassModel": table_models.IrregularityOfMassModel,
     "DriftModel": table_models.DriftModel,
     "BaseShearModel": table_models.BaseShearModel,
     "JointShearBCCModel": table_models.JointShearBCCModel,
