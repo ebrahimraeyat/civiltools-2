@@ -57,3 +57,16 @@ class DistanceCommand(BaseCommand):
     @classmethod
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
         return CommandResult(title="Distance", ok=True)
+
+
+@register
+class ExpandLoadSetsCommand(BaseCommand):
+    command_id = "expand_load_sets"
+    label = "Expand Area Load Sets"
+    menu_path = "Tools"
+    tooltip = "Expand shell uniform load sets into individual uniform loads and apply to the model"
+    dialog_class = "civiltools.gui.dialogs.expand_load_sets_dialog.ExpandLoadSetsDialog"
+
+    @classmethod
+    def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        return CommandResult(title="Expand Load Sets", ok=True)
