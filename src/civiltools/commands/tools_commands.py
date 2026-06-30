@@ -70,3 +70,16 @@ class ExpandLoadSetsCommand(BaseCommand):
     @classmethod
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
         return CommandResult(title="Expand Load Sets", ok=True)
+
+
+@register
+class ConnectBeamCommand(BaseCommand):
+    command_id = "connect_beam"
+    label = "Connect Two Beams"
+    menu_path = "Tools"
+    tooltip = "Connect two selected beams at their ends nearest the intersection"
+    dialog_class = "civiltools.gui.dialogs.connect_beam_dialog.ConnectBeamDialog"
+
+    @classmethod
+    def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        return CommandResult(title="Connect Beams", ok=True)
