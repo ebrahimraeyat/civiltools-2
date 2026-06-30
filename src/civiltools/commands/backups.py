@@ -26,3 +26,17 @@ class DeleteBackupsCommand(BaseCommand):
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
         # Interaction happens entirely inside the dialog; never called directly.
         return CommandResult(title="Delete Backups", ok=True)
+
+
+@register
+class RestoreBackupCommand(BaseCommand):
+    command_id = "restore_backup"
+    label = "Restore Backup"
+    menu_path = "Tools"
+    tooltip = "Restore a BACKUP_*.EDB file over the current model"
+    dialog_class = "civiltools.gui.dialogs.restore_backup_dialog.RestoreBackupDialog"
+
+    @classmethod
+    def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        # Interaction happens entirely inside the dialog; never called directly.
+        return CommandResult(title="Restore Backup", ok=True)
