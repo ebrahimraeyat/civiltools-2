@@ -19,7 +19,7 @@ def export_slab_rebar_dxf(
     separate_layers: bool = False,
     top: bool = True,
     bottom: bool = True,
-    optimizer_params: dict[str, float] | None = None,
+    optimizer_params: dict[str, Any] | None = None,
 ) -> str:
     """Export grouped slab rebar plans to DXF.
     

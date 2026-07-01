@@ -227,6 +227,62 @@ class SlabRebarPlanDialog(QDialog):
         opt_lay.addLayout(row_min_bar)
 
         layout.addWidget(opt_group)
+
+        # ── Bar sizes & priority ────────────────────────────────────────────
+        bars_group = QGroupBox("Bar Sizes && Priority")
+        bars_lay = QVBoxLayout(bars_group)
+        bars_lay.addWidget(QLabel(
+            "Check the sizes to use. Drag or use the buttons to reorder priority "
+            "(top = most preferred). Fewer sizes = less 12 m bar waste."
+        ))
+
+        # Catalog of available bar sizes (name -> nominal diameter in mm)
+        self._bar_catalog = {
+            "phi8": 8, "phi10": 10, "phi12": 12, "phi14": 14, "phi16": 16,
+            "phi18": 18, "phi20": 20, "phi22": 22, "phi25": 25,
+        }
+        # Default priority order (preferred first) and default selection
+        default_priority = ["phi12", "phi10", "phi14", "phi16", "phi18", "phi8", "phi20", "phi22", "phi25"]
+        default_checked = {"phi10", "phi12"}
+
+        self.bar_list = QListWidget()
+        self.bar_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.bar_list.setMaximumHeight(220)
+        for name in default_priority:
+            diam = self._bar_catalog[name]
+            item = QListWidgetItem(f"\u03a6{diam}")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if name in default_checked else Qt.CheckState.Unchecked
+            )
+            self.bar_list.addItem(item)
+        bars_lay.addWidget(self.bar_list)
+
+        bar_btn_row = QHBoxLayout()
+        self.btn_bar_up = QPushButton("\u2191 Move Up")
+        self.btn_bar_down = QPushButton("\u2193 Move Down")
+        bar_btn_row.addWidget(self.btn_bar_up)
+        bar_btn_row.addWidget(self.btn_bar_down)
+        bar_btn_row.addStretch()
+        bars_lay.addLayout(bar_btn_row)
+
+        self.chk_single_size = QCheckBox(
+            "Single size per region (no mixed diameters, e.g. 3\u03a612 instead of 2\u03a68+1\u03a612)"
+        )
+        self.chk_single_size.setChecked(True)
+        bars_lay.addWidget(self.chk_single_size)
+
+        row_max_bars = QHBoxLayout()
+        row_max_bars.addWidget(QLabel("Max bars per region:"))
+        self.spin_max_bars = QSpinBox()
+        self.spin_max_bars.setRange(1, 10)
+        self.spin_max_bars.setValue(4)
+        row_max_bars.addWidget(self.spin_max_bars)
+        row_max_bars.addStretch()
+        bars_lay.addLayout(row_max_bars)
+
+        layout.addWidget(bars_group)
         layout.addStretch()
         return w
 
@@ -265,6 +321,38 @@ class SlabRebarPlanDialog(QDialog):
         self.btn_refresh_preview.clicked.connect(self._on_refresh_preview)
         self.btn_export.clicked.connect(self._on_export)
         self.btn_close.clicked.connect(self.reject)
+        self.btn_bar_up.clicked.connect(lambda: self._move_bar(-1))
+        self.btn_bar_down.clicked.connect(lambda: self._move_bar(1))
+
+    # ── Bar selection helpers ───────────────────────────────────────────────
+
+    def _move_bar(self, direction: int):
+        """Move the selected bar-size row up (-1) or down (+1) to change priority."""
+        row = self.bar_list.currentRow()
+        if row < 0:
+            return
+        new_row = row + direction
+        if new_row < 0 or new_row >= self.bar_list.count():
+            return
+        item = self.bar_list.takeItem(row)
+        self.bar_list.insertItem(new_row, item)
+        self.bar_list.setCurrentRow(new_row)
+
+    def _get_bar_selection(self) -> tuple[list[str], list[str]]:
+        """Return (allowed_sizes, priority_order) from the bar list.
+
+        priority_order is the full top-to-bottom order; allowed_sizes is the
+        subset that is checked. Both use internal names like 'phi12'.
+        """
+        priority: list[str] = []
+        allowed: list[str] = []
+        for i in range(self.bar_list.count()):
+            item = self.bar_list.item(i)
+            name = item.data(Qt.ItemDataRole.UserRole)
+            priority.append(name)
+            if item.checkState() == Qt.CheckState.Checked:
+                allowed.append(name)
+        return allowed, priority
 
     # ── Slots ───────────────────────────────────────────────────────────────
 
@@ -325,7 +413,13 @@ class SlabRebarPlanDialog(QDialog):
         
         # Filter cache by selected stories
         filtered_data = self._cache_data[self._cache_data["Story"].isin(selected_stories)]
-        
+
+        # Resolve bar size selection and priority
+        allowed_sizes, bar_priority = self._get_bar_selection()
+        if not allowed_sizes:
+            QMessageBox.warning(self, "Export", "Select at least one bar size in Strategy & Settings.")
+            return
+
         # Ask user for output path (optional; default to report folder)
         try:
             report_folder = self._etabs.get_new_filename_in_folder_and_add_name("report", "slab_rebar_plan")[0]
@@ -357,6 +451,10 @@ class SlabRebarPlanDialog(QDialog):
                     "min_area_threshold": self.spin_min_area.value(),
                     "extend_length": self.spin_extend.value(),
                     "min_bar_length": self.spin_min_bar.value(),
+                    "max_bars_per_point": self.spin_max_bars.value(),
+                    "allowed_bar_sizes": allowed_sizes,
+                    "bar_priority": bar_priority,
+                    "single_size_only": self.chk_single_size.isChecked(),
                 }
             )
 
