@@ -519,8 +519,12 @@ class EarthquakeFactorDialog(QDialog):
 
         data = config.get_data_for_apply_earthquakes(bld, etabs=self._etabs, d=d)
         if data is None:
+            details = self._unsupported_apply_reason(d, bld)
+            msg = "Cannot apply earthquake for your system configuration."
+            if details:
+                msg = f"{msg}\n\n{details}"
             QMessageBox.warning(self, "Not Supported",
-                                "Cannot apply earthquake for your system configuration.")
+                                msg)
             return
 
         with BusyDialog(
@@ -554,6 +558,36 @@ class EarthquakeFactorDialog(QDialog):
         self._set_status("✔  Seismic coefficients written to ETABS successfully.", "#2e7d32")
         QMessageBox.information(self, "Done", "Successfully written to ETABS.")
         self.accept()
+
+    def _unsupported_apply_reason(self, settings: dict, building) -> str:
+        """Return a human-readable reason when earthquake apply is blocked."""
+        if not settings.get("activate_second_system", False):
+            return ""
+
+        if getattr(building, "building2", None) is None:
+            return "Second system is enabled, but top-system data is missing."
+
+        bot_x_ru = building.x_system.Ru
+        bot_y_ru = building.y_system.Ru
+        top_x_ru = building.building2.x_system.Ru
+        top_y_ru = building.building2.y_system.Ru
+
+        special = settings.get("special_case", False)
+        if special and (bot_x_ru != top_x_ru or bot_y_ru != top_y_ru):
+            return (
+                "Special-case dual system requires equal Ru in top and bottom systems.\n"
+                f"X: bottom={bot_x_ru}, top={top_x_ru} | "
+                f"Y: bottom={bot_y_ru}, top={top_y_ru}"
+            )
+
+        if bot_x_ru < top_x_ru or bot_y_ru < top_y_ru:
+            return (
+                "Dual system in height is unsupported when top-system Ru is greater than bottom-system Ru.\n"
+                f"X: bottom={bot_x_ru}, top={top_x_ru} | "
+                f"Y: bottom={bot_y_ru}, top={top_y_ru}"
+            )
+
+        return "Current top/bottom system arrangement is not supported for automatic earthquake apply."
 
     def _export_to_word(self):
         if not self._building:

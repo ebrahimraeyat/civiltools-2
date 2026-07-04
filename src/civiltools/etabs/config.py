@@ -236,6 +236,7 @@ def load(etabs, widget=None, d=None, reverse=False, include_base=True):
     if widget is None:
         return d
 
+    _fill_load_pattern_combos(etabs, widget)
     fill_cities(widget)
     fill_top_bot_stories(etabs, widget)
     fill_height_and_no_of_stories(etabs, widget)
@@ -249,6 +250,7 @@ def load(etabs, widget=None, d=None, reverse=False, include_base=True):
     _fill_seismic_lists(etabs, widget, d, drift=True)
     _fill_dynamic_combos(etabs, widget, d)
     _fill_dynamic_lists(etabs, widget, d)
+    _fill_dynamic_drift_lists(etabs, widget, d)
     _fill_angular_list(etabs, widget, d)
 
     for key in (
@@ -300,6 +302,109 @@ def load(etabs, widget=None, d=None, reverse=False, include_base=True):
     _load_system_treeviews(widget, d)
     check_heights(etabs, widget)
     return d
+
+
+def _fill_load_pattern_combos(etabs, widget):
+    """Populate load-pattern and modal combo boxes from the ETABS model."""
+    try:
+        load_patterns = etabs.load_patterns.get_load_patterns()
+    except Exception:
+        return
+
+    try:
+        load_types = {lp: etabs.SapModel.LoadPatterns.GetLoadType(lp)[0] for lp in load_patterns}
+    except Exception:
+        load_types = {}
+
+    live_loads = [""] + [lp for lp in load_patterns if load_types.get(lp) in (3, 4, 11)]
+    other_loads = [""] + [lp for lp in load_patterns if load_types.get(lp) == 8]
+
+    for combo_name in (
+        "live_combobox", "lred_combobox", "lroof_combobox",
+        "live5_combobox", "lred5_combobox", "live_parking_combobox",
+    ):
+        combo = getattr(widget, combo_name, None)
+        if combo is not None:
+            combo.clear()
+            combo.addItems(live_loads)
+            _select_first_real_item(combo)
+
+    for combo_name in ("mass_combobox", "ev_combobox", "hxp_combobox", "hxn_combobox", "hyp_combobox", "hyn_combobox"):
+        combo = getattr(widget, combo_name, None)
+        if combo is not None:
+            combo.clear()
+            combo.addItems(other_loads)
+            _select_first_real_item(combo)
+
+    if hasattr(widget, "dead_combobox"):
+        combo = widget.dead_combobox
+        combo.clear()
+        for lp in load_patterns:
+            if load_types.get(lp) == 1:
+                combo.addItem(lp)
+        if combo.count() > 0:
+            combo.setCurrentIndex(0)
+
+    if hasattr(widget, "sdead_combobox"):
+        combo = widget.sdead_combobox
+        combo.clear()
+        for lp in load_patterns:
+            if load_types.get(lp) == 2:
+                combo.addItem(lp)
+        if combo.count() > 0:
+            combo.setCurrentIndex(0)
+
+    if hasattr(widget, "snow_combobox"):
+        combo = widget.snow_combobox
+        combo.clear()
+        for lp in load_patterns:
+            if load_types.get(lp) == 7:
+                combo.addItem(lp)
+        if combo.count() > 0:
+            combo.setCurrentIndex(0)
+
+    for lp in load_patterns:
+        load_type = load_types.get(lp)
+        if load_type == 3 and "5" in lp:
+            combo = getattr(widget, "live5_combobox", None)
+            if combo is not None:
+                combo.setCurrentIndex(combo.findText(lp))
+        elif load_type == 4 and "5" in lp:
+            combo = getattr(widget, "lred5_combobox", None)
+            if combo is not None:
+                combo.setCurrentIndex(combo.findText(lp))
+        elif load_type == 8:
+            lower = lp.lower()
+            if "mass" in lower or "wall" in lower:
+                combo = getattr(widget, "mass_combobox", None)
+                if combo is not None:
+                    combo.setCurrentIndex(combo.findText(lp))
+            elif any(token in lower for token in ("ev", "ez", "qv", "qz")):
+                combo = getattr(widget, "ev_combobox", None)
+                if combo is not None:
+                    combo.setCurrentIndex(combo.findText(lp))
+
+    modal_combo = getattr(widget, "modal_combobox", None)
+    if modal_combo is not None:
+        try:
+            modals = etabs.load_cases.get_loadcase_withtype(3)
+        except Exception:
+            modals = []
+        modal_combo.clear()
+        modal_combo.addItems(modals)
+        if modal_combo.count() > 0:
+            modal_combo.setCurrentIndex(0)
+
+
+def _select_first_real_item(combo):
+    """Select the first non-empty item; fall back to index 0."""
+    if combo is None or combo.count() == 0:
+        return
+    for index in range(combo.count()):
+        if combo.itemText(index).strip():
+            combo.setCurrentIndex(index)
+            return
+    combo.setCurrentIndex(0)
 
 
 # ─── Internal fill helpers ──────────────────────────────────────────
@@ -436,6 +541,25 @@ def _fill_dynamic_lists(etabs, widget, d):
         return
     try:
         sx, sxe, sy, sye = etabs.get_dynamic_loadcases(d)
+    except Exception:
+        return
+    x_list.addItems((sx, sxe))
+    y_list.addItems((sy, sye))
+    for lw in (x_list, y_list):
+        for i in range(lw.count()):
+            item = lw.item(i)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+
+
+def _fill_dynamic_drift_lists(etabs, widget, d):
+    from PySide6.QtCore import Qt
+    x_list = getattr(widget, "x_dynamic_drift_loadcase_list", None)
+    y_list = getattr(widget, "y_dynamic_drift_loadcase_list", None)
+    if not (x_list and y_list):
+        return
+    try:
+        sx, sxe, sy, sye = etabs.get_dynamic_drift_loadcases(d)
     except Exception:
         return
     x_list.addItems((sx, sxe))
@@ -789,6 +913,101 @@ def get_second_system_seismic_drift(widget):
         widget.exp1_drift_combobox.currentText(), widget.ey1_drift_combobox.currentText(),
         widget.eyn1_drift_combobox.currentText(), widget.eyp1_drift_combobox.currentText(),
     )
+
+
+def ensure_required_loads_exist(
+    etabs,
+    widget,
+    spectrum_function: str | None = None,
+    allow_dynamic_without_function: bool = False,
+):
+    """Create missing required load patterns/load cases from current settings."""
+    _ensure_retaining_wall_load_patterns(etabs, widget)
+    _ensure_dynamic_loadcases(
+        etabs,
+        widget,
+        spectrum_function=spectrum_function,
+        allow_without_function=allow_dynamic_without_function,
+    )
+
+
+def _ensure_retaining_wall_load_patterns(etabs, widget):
+    group = getattr(widget, "retaining_wall_groupbox", None)
+    if group is None or not group.isChecked():
+        return
+
+    existing = set(etabs.load_patterns.get_load_patterns())
+    for key in ("hxp_combobox", "hxn_combobox", "hyp_combobox", "hyn_combobox"):
+        combo = getattr(widget, key, None)
+        if combo is None:
+            continue
+        name = combo.currentText().strip()
+        if name and name not in existing:
+            etabs.SapModel.LoadPatterns.Add(name, 8)
+            existing.add(name)
+
+
+def _ensure_dynamic_loadcases(
+    etabs,
+    widget,
+    spectrum_function: str | None = None,
+    allow_without_function: bool = False,
+):
+    group = getattr(widget, "dynamic_analysis_groupbox", None)
+    if group is None or not group.isChecked():
+        return
+
+    dynamic_keys = (
+        "sx_combobox", "sxe_combobox", "sy_combobox", "sye_combobox",
+        "sx_drift_combobox", "sxe_drift_combobox", "sy_drift_combobox", "sye_drift_combobox",
+    )
+    names = []
+    for key in dynamic_keys:
+        combo = getattr(widget, key, None)
+        names.append(combo.currentText().strip() if combo is not None else "")
+
+    if any(not name for name in names):
+        raise ValueError("Dynamic loadcase names cannot be empty.")
+    if len(set(names)) != 8:
+        raise ValueError("Dynamic loadcase names must be unique.")
+
+    existing_rs = set(etabs.load_cases.get_response_spectrum_loadcase_name())
+    missing = [name for name in names if name not in existing_rs]
+    if not missing:
+        return
+
+    funcs = list(etabs.func.response_spectrum_names())
+    if not funcs and not allow_without_function:
+        joined = ", ".join(missing)
+        raise ValueError(
+            "Define at least one response spectrum function in ETABS before creating "
+            f"missing dynamic loadcases: {joined}"
+        )
+
+    func = spectrum_function.strip() if isinstance(spectrum_function, str) else None
+    if func and funcs and func not in funcs:
+        raise ValueError(f"Selected response spectrum function not found in ETABS: {func}")
+    if not func and funcs:
+        func = funcs[0]
+
+    sx, sxe, sy, sye, sx_drift, sxe_drift, sy_drift, sye_drift = names
+    ecc_dirs = {
+        sx: (0.0, "U1"),
+        sxe: (0.05, "U1"),
+        sy: (0.0, "U2"),
+        sye: (0.05, "U2"),
+        sx_drift: (0.0, "U1"),
+        sxe_drift: (0.05, "U1"),
+        sy_drift: (0.0, "U2"),
+        sye_drift: (0.05, "U2"),
+    }
+
+    for loadcase in missing:
+        ecc, direction = ecc_dirs[loadcase]
+        etabs.load_cases.add_response_spectrum_loadcases([loadcase], ecc)
+        if func:
+            args = [1, (direction,), (func,), (1,), ("Global",), (0.0,)]
+            etabs.SapModel.LoadCases.ResponseSpectrum.SetLoads(loadcase, *args)
 
 
 # ─── Earthquake factor data helpers ────────────────────────────────

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QFile
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox, QInputDialog
 
 from civiltools.etabs import config
 from civiltools.db import ostanha
@@ -186,12 +186,119 @@ class SettingsDialog(QDialog):
 
     def _save_and_accept(self):
         try:
+            if not self._handle_missing_static_seismic_patterns():
+                return
+
+            spectrum_function, allow_without_function = self._prepare_dynamic_spectrum_creation()
+            if spectrum_function is False and allow_without_function is False:
+                return
+
+            config.ensure_required_loads_exist(
+                self._etabs,
+                self.ui,
+                spectrum_function=spectrum_function,
+                allow_dynamic_without_function=allow_without_function,
+            )
             config.save(self._etabs, self.ui)
             self._result = CommandResult(title="Settings", ok=True,
                                          summary="Settings saved to ETABS.")
             self.accept()
         except Exception as exc:
             QMessageBox.critical(self, "Save Error", str(exc))
+
+    def _handle_missing_static_seismic_patterns(self) -> bool:
+        """Prompt user when static seismic load patterns are missing."""
+        first = list(config.get_first_system_seismic(self.ui))
+        second = list(config.get_second_system_seismic(self.ui)) if getattr(self.ui, "activate_second_system", None) and self.ui.activate_second_system.isChecked() else []
+        static_names = [name.strip() for name in (first + second) if name and name.strip()]
+        if not static_names:
+            return True
+
+        existing = set(self._etabs.load_patterns.get_load_patterns())
+        missing = sorted({name for name in static_names if name not in existing})
+        if not missing:
+            return True
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Missing Static Earthquake Patterns")
+        msg.setText("Some static seismic load patterns do not exist in ETABS.")
+        msg.setInformativeText("Missing: " + ", ".join(missing))
+        create_btn = msg.addButton("Create Missing", QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = msg.addButton("Continue Without Creating", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = msg.addButton(QMessageBox.StandardButton.Cancel)
+        msg.exec()
+
+        clicked = msg.clickedButton()
+        if clicked == create_btn:
+            for name in missing:
+                self._etabs.SapModel.LoadPatterns.Add(name, 5)
+            return True
+        if clicked == skip_btn:
+            return True
+        return clicked != cancel_btn and clicked is not None
+
+    def _prepare_dynamic_spectrum_creation(self):
+        """Ask user for response spectrum function when creating missing dynamic loadcases."""
+        group = getattr(self.ui, "dynamic_analysis_groupbox", None)
+        if group is None or not group.isChecked():
+            return None, False
+
+        keys = (
+            "sx_combobox", "sxe_combobox", "sy_combobox", "sye_combobox",
+            "sx_drift_combobox", "sxe_drift_combobox", "sy_drift_combobox", "sye_drift_combobox",
+        )
+        names = []
+        for key in keys:
+            combo = getattr(self.ui, key, None)
+            names.append(combo.currentText().strip() if combo is not None else "")
+
+        if any(not name for name in names):
+            QMessageBox.warning(
+                self,
+                "Dynamic Loadcase",
+                "Dynamic loadcase names cannot be empty.",
+            )
+            return False, False
+
+        if len(set(names)) != 8:
+            QMessageBox.warning(
+                self,
+                "Dynamic Loadcase",
+                "Dynamic loadcase names must be unique.",
+            )
+            return False, False
+
+        existing_rs = set(self._etabs.load_cases.get_response_spectrum_loadcase_name())
+        missing = [name for name in names if name not in existing_rs]
+        if not missing:
+            return None, False
+
+        funcs = list(self._etabs.func.response_spectrum_names())
+        if funcs:
+            selected, ok = QInputDialog.getItem(
+                self,
+                "Choose Response Spectrum",
+                "Select response spectrum function for new dynamic loadcases:",
+                funcs,
+                0,
+                False,
+            )
+            if not ok:
+                return False, False
+            return selected, False
+
+        answer = QMessageBox.question(
+            self,
+            "Response Spectrum Function",
+            "No response spectrum function is defined in ETABS.\n"
+            "Create missing dynamic loadcases without assigning a function?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            return None, True
+        return False, False
 
     @property
     def result(self) -> CommandResult | None:
