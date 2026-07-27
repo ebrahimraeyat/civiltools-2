@@ -30,3 +30,5 @@ nuitka-crash-report.xml
 # AI prompt
 prompt.md
 
+# .ipynb
+*.ipynb
