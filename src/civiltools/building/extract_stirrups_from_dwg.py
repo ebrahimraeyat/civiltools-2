@@ -27,11 +27,11 @@ from __future__ import annotations
 import math
 import os
 import re
-import sys
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 # ── Fix pywin32 DLL loading ────────────────────────────────────────
 _pywin32_system32 = os.path.join(
@@ -43,8 +43,8 @@ if os.path.isdir(_pywin32_system32):
     if _pywin32_system32 not in os.environ.get("PATH", ""):
         os.environ["PATH"] = _pywin32_system32 + os.pathsep + os.environ.get("PATH", "")
 
+import pythoncom        # noqa: E402,I001
 import win32com.client  # noqa: E402
-import pythoncom        # noqa: E402
 
 # ---------------------------------------------------------------------------
 #  Constants
@@ -54,6 +54,9 @@ STEEL_DENSITY = 7850.0          # kg/m³
 CONCRETE_COVER_CM = 4.0         # concrete cover for beams (cm)
 DEFAULT_HOOK_FACTOR = 10.0      # hook length = factor × diameter
 STANDARD_BAR_LENGTH_M = 12.0    # standard rebar stock length
+DEFAULT_LISTOFER_TEMPLATE = (
+    Path(__file__).resolve().parents[1] / "dxf" / "templates" / "listofer_template.dxf"
+)
 
 # All AutoCAD representations of the diameter symbol
 _DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ~T])'
@@ -252,7 +255,7 @@ class StirrupFromDwg:
 
     def __init__(
         self,
-        beam_dims: Optional[BeamDimensions] = None,
+        beam_dims: BeamDimensions | None = None,
         cover_cm: float = CONCRETE_COVER_CM,
         hook_factor: float = DEFAULT_HOOK_FACTOR,
     ) -> None:
@@ -273,7 +276,7 @@ class StirrupFromDwg:
         """Strip MText formatting codes, returning plain text."""
         text = re.sub(r'{\[^;]+;([^}]*)}', r'', text)
         text = re.sub(r'\[AHWQTLOoPpCcFf][^;]*;', '', text)
-        text = text.replace('\P', ' ').replace('\p', ' ')
+        text = text.replace('\\P', ' ').replace('\\p', ' ')
         text = text.replace('{', '').replace('}', '')
         return ' '.join(text.split()).strip()
 
@@ -519,7 +522,10 @@ class StirrupFromDwg:
 
         for i, ti in enumerate(self.text_objects):
             raw = ti.text_string
-            print(f"  [{i+1}] type={ti.entity_type:12s} | text='{raw[:40]:40s}' | pos=({ti.insertion_point[0]:.1f}, {ti.insertion_point[1]:.1f})")
+            print(
+                f"  [{i+1}] type={ti.entity_type:12s} | text='{raw[:40]:40s}' | "
+                f"pos=({ti.insertion_point[0]:.1f}, {ti.insertion_point[1]:.1f})"
+            )
 
         for ti in self.text_objects:
             txt = ti.text_string.strip()
@@ -576,11 +582,11 @@ class StirrupFromDwg:
                 continue
 
             # 6) Not a stirrup text → skip
-            print(f"    → SKIPPED")
+            print("    → SKIPPED")
 
         # ---- Match stirrup texts with nearest length text ----
         print(f"\n{'-'*50}")
-        print(f"CLASSIFICATION RESULTS:")
+        print("CLASSIFICATION RESULTS:")
         print(f"  Stirrup texts: {len(stirrup_texts)}")
         print(f"  Length texts:  {len(length_texts)}")
         print(f"  ADD texts:     {len(add_texts)}")
@@ -636,10 +642,18 @@ class StirrupFromDwg:
 
             if best_beam:
                 zone.beam = best_beam
-                print(f"    → BEAM MATCHED: {best_beam.width}x{best_beam.height}cm (dist={best_beam_dist:.1f})")
+                print(
+                    "    → BEAM MATCHED: "
+                    f"{best_beam.width}x{best_beam.height}cm "
+                    f"(dist={best_beam_dist:.1f})"
+                )
             else:
                 zone.beam = BeamDimensions(width=self.beam.width, height=self.beam.height)
-                print(f"    → BEAM FALLBACK: {zone.beam.width}x{zone.beam.height}cm (no nearby size found)")
+                print(
+                    "    → BEAM FALLBACK: "
+                    f"{zone.beam.width}x{zone.beam.height}cm "
+                    "(no nearby size found)"
+                )
 
             # Check for ADD near this stirrup text
             zone.has_add, zone.add_count = self._find_add_nearby(
@@ -844,12 +858,15 @@ def export_to_excel(
     """
     try:
         import openpyxl
-        from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
     except ImportError:
         raise ImportError("openpyxl is required. Install: pip install openpyxl")
 
     wb = openpyxl.Workbook()
     ws = wb.active
+    if ws is None:
+        raise RuntimeError("Failed to create the Stirrups worksheet")
     ws.title = "Stirrups"
     ws.sheet_view.rightToLeft = True
 
@@ -926,7 +943,7 @@ def export_to_excel(
     # Column widths
     col_widths = [6, 8, 20, 10, 10, 12, 14, 8, 14, 12, 14, 12]
     for i, width in enumerate(col_widths, 1):
-        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
+        ws.column_dimensions[get_column_letter(i)].width = width
 
     wb.save(output_path)
     return output_path
@@ -939,13 +956,236 @@ def export_to_excel(
 class StirrupTableDrawer:
     """Draw a stirrup schedule table directly in AutoCAD."""
 
-    def __init__(self, doc: Any = None) -> None:
+    def __init__(
+        self,
+        doc: Any = None,
+        template_path: str | Path | None = DEFAULT_LISTOFER_TEMPLATE,
+        block_scale: float = 0.08,
+    ) -> None:
         if doc is None:
             self.acad = win32com.client.Dispatch("AutoCAD.Application")
             self.doc = self.acad.ActiveDocument
         else:
             self.doc = doc
         self.msp = self.doc.ModelSpace
+        self.template_path = Path(template_path) if template_path else None
+        self.block_scale = float(block_scale)
+        self._template_blocks_ready = False
+
+    def _get_ezdxf(self):
+        try:
+            import ezdxf
+        except ImportError as exc:
+            raise ImportError(
+                "Install ezdxf to load listofer template blocks (pip install ezdxf)."
+            ) from exc
+        return ezdxf
+
+    def _entity_color(self, ent: Any) -> int | None:
+        try:
+            color = int(ent.dxf.color)
+            return color if color > 0 else None
+        except Exception:
+            return None
+
+    def _copy_template_entity_to_block(self, blk_com: Any, ent: Any) -> None:
+        etype = ent.dxftype()
+        color = self._entity_color(ent)
+        created = None
+
+        if etype == "LINE":
+            start = ent.dxf.start
+            end = ent.dxf.end
+            created = blk_com.AddLine(
+                win32com.client.VARIANT(
+                    pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                    (start.x, start.y, getattr(start, "z", 0.0)),
+                ),
+                win32com.client.VARIANT(
+                    pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                    (end.x, end.y, getattr(end, "z", 0.0)),
+                ),
+            )
+        elif etype == "ARC":
+            center = ent.dxf.center
+            created = blk_com.AddArc(
+                win32com.client.VARIANT(
+                    pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                    (center.x, center.y, getattr(center, "z", 0.0)),
+                ),
+                float(ent.dxf.radius),
+                float(ent.dxf.start_angle) * math.pi / 180.0,
+                float(ent.dxf.end_angle) * math.pi / 180.0,
+            )
+        elif etype == "CIRCLE":
+            center = ent.dxf.center
+            created = blk_com.AddCircle(
+                win32com.client.VARIANT(
+                    pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                    (center.x, center.y, getattr(center, "z", 0.0)),
+                ),
+                float(ent.dxf.radius),
+            )
+        elif etype == "LWPOLYLINE":
+            points = list(ent.get_points("xyb"))
+            if len(points) >= 2:
+                flat_points: list[float] = []
+                for px, py, _bulge in points:
+                    flat_points.extend([px, py])
+                polyline = blk_com.AddLightWeightPolyline(
+                    win32com.client.VARIANT(
+                        pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                        tuple(flat_points),
+                    )
+                )
+                for index, (_px, _py, bulge) in enumerate(points):
+                    if abs(float(bulge or 0.0)) > 1e-9:
+                        try:
+                            polyline.SetBulge(index, float(bulge))
+                        except Exception:
+                            pass
+                try:
+                    polyline.Closed = bool(ent.closed)
+                except Exception:
+                    pass
+                created = polyline
+        elif etype == "TEXT":
+            insert = ent.dxf.insert
+            created = blk_com.AddText(
+                str(ent.dxf.text),
+                win32com.client.VARIANT(
+                    pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                    (insert.x, insert.y, getattr(insert, "z", 0.0)),
+                ),
+                float(getattr(ent.dxf, "height", 1.0) or 1.0),
+            )
+            try:
+                created.Rotation = float(getattr(ent.dxf, "rotation", 0.0) or 0.0) * math.pi / 180.0
+            except Exception:
+                pass
+        elif etype == "ATTDEF":
+            insert = ent.dxf.insert
+            created = blk_com.AddAttribute(
+                float(getattr(ent.dxf, "height", 1.0) or 1.0),
+                0,
+                str(getattr(ent.dxf, "prompt", ent.dxf.tag)),
+                win32com.client.VARIANT(
+                    pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                    (insert.x, insert.y, getattr(insert, "z", 0.0)),
+                ),
+                str(ent.dxf.tag),
+                str(getattr(ent.dxf, "text", "") or ""),
+            )
+
+        if created is not None and color is not None:
+            try:
+                created.Color = color
+            except Exception:
+                pass
+
+    def _ensure_template_blocks(self) -> None:
+        if self._template_blocks_ready:
+            return
+        if self.template_path is None or not self.template_path.exists():
+            return
+
+        try:
+            blocks = self.doc.Blocks
+            existing = {blocks.Item(i).Name for i in range(blocks.Count)}
+        except Exception:
+            existing = set()
+
+        if "TO" in existing:
+            self._template_blocks_ready = True
+            return
+
+        ezdxf = self._get_ezdxf()
+        readfile_fn = getattr(ezdxf, "readfile", None)
+        if readfile_fn is None:
+            from ezdxf import filemanagement as _filemanagement
+
+            readfile_fn = _filemanagement.readfile
+        template_doc = readfile_fn(str(self.template_path))
+        if "TO" not in template_doc.blocks:
+            return
+
+        try:
+            block_def = self.doc.Blocks.Add(
+                win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (0.0, 0.0, 0.0)),
+                "TO",
+            )
+        except Exception:
+            return
+
+        for ent in template_doc.blocks.get("TO"):
+            try:
+                self._copy_template_entity_to_block(block_def, ent)
+            except Exception:
+                continue
+
+        self._template_blocks_ready = True
+
+    def _set_block_attributes(self, block_ref: Any, values: dict[str, str]) -> None:
+        try:
+            attributes = block_ref.GetAttributes()
+        except Exception:
+            return
+        for attrib in attributes:
+            try:
+                tag = str(getattr(attrib, "TagString", "") or "").strip().upper()
+                if tag in values:
+                    attrib.TextString = str(values[tag])
+            except Exception:
+                continue
+
+    def _stirrup_shape_values(
+        self,
+        zone: StirrupZone,
+        cover_cm: float,
+        hook_factor: float,
+    ) -> dict[str, str]:
+        width_cm = max(float(zone.beam.width) - 2.0 * cover_cm, 0.0)
+        height_cm = max(float(zone.beam.height) - 2.0 * cover_cm, 0.0)
+        hook_cm = max(hook_factor * (float(zone.diameter) / 10.0), 0.0)
+        return {
+            "L1": str(int(round(width_cm))),
+            "L2": str(int(round(height_cm))),
+            "L3": str(int(round(hook_cm))),
+        }
+
+    def _insert_shape_block(
+        self,
+        zone: StirrupZone,
+        x: float,
+        y_top: float,
+        width: float,
+        height: float,
+        cover_cm: float,
+        hook_factor: float,
+    ) -> None:
+        self._ensure_template_blocks()
+        insert_x = x + width * 0.5
+        insert_y = y_top - height * 0.60
+        try:
+            block_ref = self.msp.InsertBlock(
+                win32com.client.VARIANT(
+                    pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                    (insert_x, insert_y, 0.0),
+                ),
+                "TO",
+                self.block_scale,
+                self.block_scale,
+                self.block_scale,
+                0.0,
+            )
+        except Exception as exc:
+            print(f"Stirrup shape block insertion failed for S{zone.pos:02d}: {exc}")
+            return
+
+        self._set_block_attributes(
+            block_ref,
+            self._stirrup_shape_values(zone, cover_cm, hook_factor),
+        )
 
     def draw_table(
         self,
@@ -957,13 +1197,15 @@ class StirrupTableDrawer:
         x0, y0 = insert_point
         zones = extractor.stirrup_zones
         summary = extractor.summary_by_size()
+        cover_cm = extractor.cover
+        hook_factor = extractor.hook_factor
 
         cell_h = 8 * scale
-        col_widths = [10, 12, 25, 12, 10, 10, 14, 8, 8, 8, 14, 12, 14, 12]
+        col_widths = [10, 12, 25, 18, 12, 10, 10, 14, 8, 8, 8, 14, 12, 14, 12]
         col_widths = [w * scale for w in col_widths]
 
         headers = [
-            "Row", "POS", "Description", "Zone", "Dia", "Spc",
+            "Row", "POS", "Description", "Shape", "Zone", "Dia", "Spc",
             "ZoneLen", "Cnt", "B", "H", "SingleL", "TotalL", "UnitW", "TotalW",
         ]
 
@@ -979,6 +1221,7 @@ class StirrupTableDrawer:
                 str(i),
                 f"S{zone.pos:02d}",
                 zone.description,
+                "",
                 zone_type_map.get(zone.zone_type, zone.zone_type),
                 str(int(zone.diameter)) if zone.diameter else "",
                 str(int(zone.spacing)) if zone.spacing else "",
@@ -991,14 +1234,30 @@ class StirrupTableDrawer:
                 f"{zone.unit_weight:.3f}",
                 f"{zone.total_weight:.2f}",
             ]
-            self._draw_row(x0, y, col_widths, cell_h, values)
+            self._draw_row(
+                x0,
+                y,
+                col_widths,
+                cell_h,
+                values,
+                shape_col_idx=3,
+                shape_callback=lambda cx, cy, cw, ch, z=zone: self._insert_shape_block(
+                    z,
+                    cx,
+                    cy,
+                    cw,
+                    ch,
+                    cover_cm,
+                    hook_factor,
+                ),
+            )
             y -= cell_h
 
         # Summary row
         if summary:
             total = summary[-1]
             sum_values = [
-                "", "", "TOTAL", "", "", "", "", "", "",
+                "", "", "TOTAL", "", "", "", "", "", "", "",
                 str(total.get('Number (12 m bars)', '')),
                 "",
                 str(total.get('Total Length (m)', '')),
@@ -1015,10 +1274,12 @@ class StirrupTableDrawer:
         height: float,
         values: list[str],
         fill_color: int = 0,
+        shape_col_idx: int | None = None,
+        shape_callback: Any = None,
     ) -> None:
         """Draw one table row with text centered in each cell."""
         x = x0
-        for width, value in zip(col_widths, values):
+        for idx, (width, value) in enumerate(zip(col_widths, values)):
             # Cell border — flat list of (x, y) pairs for LWPOLYLINE
             pts = [
                 x, y,
@@ -1030,6 +1291,12 @@ class StirrupTableDrawer:
             self.msp.AddLightWeightPolyline(
                 win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, pts)
             )
+
+            if shape_col_idx is not None and idx == shape_col_idx:
+                if shape_callback is not None:
+                    shape_callback(x, y, width, height)
+                x += width
+                continue
 
             # Text — use Left alignment with InsertionPoint for reliability
             if value:
