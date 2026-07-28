@@ -506,3 +506,49 @@ class RebarFromDwg:
             })
 
         return rows
+
+def calculate_hook_parameters(diameter_mm: float, hook_type: str) -> tuple[float, float]:
+    """
+    Calculate the minimum internal bend diameter and straight extension (tail) length
+    for 90° and 135° hooks in rebar detailing, based on standard code rules
+    (covering bar diameters from 10 mm to 90 mm).
+
+    Args:
+        diameter_mm (float): Nominal diameter of the rebar (mm). Must be between 10 and 90.
+        hook_type (str): Type of hook, either '90' or '135'.
+
+    Returns:
+        tuple[float, float]: (internal_bend_diameter_mm, straight_extension_mm)
+            - internal_bend_diameter_mm: Minimum internal diameter of the bend.
+            - straight_extension_mm: Straight length beyond the end of the bend
+              (also known as the hook tail length).
+
+    Raises:
+        ValueError: If the diameter is outside the supported range (10-90 mm)
+                    or if hook_type is invalid.
+    """
+    db = diameter_mm
+    if not (10 <= db <= 90):
+        raise ValueError("Rebar diameter must be between 10 and 90 mm.")
+
+    if hook_type == '90':
+        if db <= 16:   # Range: 10 to 16 mm
+            bend_diameter = 4 * db
+            # Maximum of 75 mm or 6*db (minimum code requirement)
+            straight_length = max(75, 6 * db)
+        else:          # Range: greater than 16 mm up to 90 mm
+            bend_diameter = 6 * db
+            straight_length = 12 * db
+
+    elif hook_type == '135':
+        if db <= 16:   # Range: 10 to 16 mm
+            bend_diameter = 4 * db
+            # Maximum of 75 mm or 6*db (minimum code requirement)
+        else:          # Range: greater than 16 mm up to 90 mm
+            bend_diameter = 6 * db
+        straight_length = max(75, 6 * db)
+    else:
+        raise ValueError("Hook type must be '90' or '135'.")
+
+    return bend_diameter, straight_length
+

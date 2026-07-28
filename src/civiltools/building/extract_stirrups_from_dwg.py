@@ -959,12 +959,12 @@ class StirrupTableDrawer:
         summary = extractor.summary_by_size()
 
         cell_h = 8 * scale
-        col_widths = [10, 12, 25, 12, 10, 10, 14, 8, 14, 12, 14, 12]
+        col_widths = [10, 12, 25, 12, 10, 10, 14, 8, 8, 8, 14, 12, 14, 12]
         col_widths = [w * scale for w in col_widths]
 
         headers = [
             "Row", "POS", "Description", "Zone", "Dia", "Spc",
-            "ZoneLen", "Cnt", "SingleL", "TotalL", "UnitW", "TotalW",
+            "ZoneLen", "Cnt", "B", "H", "SingleL", "TotalL", "UnitW", "TotalW",
         ]
 
         # Header row
@@ -984,6 +984,8 @@ class StirrupTableDrawer:
                 str(int(zone.spacing)) if zone.spacing else "",
                 str(int(zone.zone_length)) if zone.zone_length else "",
                 str(zone.count),
+                str(int(zone.beam.width)) if zone.beam else "",
+                str(int(zone.beam.height)) if zone.beam else "",
                 f"{zone.single_length:.2f}",
                 f"{zone.total_length:.2f}",
                 f"{zone.unit_weight:.3f}",
@@ -996,7 +998,7 @@ class StirrupTableDrawer:
         if summary:
             total = summary[-1]
             sum_values = [
-                "", "", "TOTAL", "", "", "", "",
+                "", "", "TOTAL", "", "", "", "", "", "",
                 str(total.get('Number (12 m bars)', '')),
                 "",
                 str(total.get('Total Length (m)', '')),
