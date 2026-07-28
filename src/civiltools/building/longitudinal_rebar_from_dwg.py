@@ -40,6 +40,7 @@ import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # ── Fix pywin32 DLL loading ────────────────────────────────────────
@@ -67,6 +68,11 @@ STEEL_DENSITY = 7850.0          # kg/m³
 STANDARD_BAR_LENGTH_M = 12.0    # standard rebar stock length
 DEFAULT_BLOCK_NAME = "buble"    # block reference name to look for
 DEFAULT_SHAPE_LAYER = "ListoferRebarShapes"
+DEFAULT_LISTOFER_TEMPLATE = (
+    Path(__file__).resolve().parents[1] / "dxf" / "templates" / "listofer_template.dxf"
+)
+ACI_YELLOW = 2
+ACI_BLUE = 5
 
 # All AutoCAD representations of the diameter symbol
 _DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ~T])'
@@ -136,6 +142,15 @@ def _bend_length_cm(diameter_mm: float, hook_type: str = '90') -> tuple[float, l
         warnings.append(
             f"diameter {diameter_mm}mm out of hook range; used 16*d/10 fallback")
         return round(16.0 * diameter_mm / 10.0, 2), warnings
+
+
+def _bend_radius_cm(diameter_mm: float, hook_type: str = '90') -> float:
+    """Return bend radius in cm from hook parameters."""
+    try:
+        bend_dia_mm, _tail_mm = calculate_hook_parameters(diameter_mm, hook_type)
+        return round(bend_dia_mm / 20.0, 2)  # dia(mm)/2 -> radius(mm), then mm -> cm
+    except ValueError:
+        return round((4.0 * diameter_mm) / 10.0, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +241,8 @@ class LongitudinalRebarFromDwg:
         block_name: str | None = DEFAULT_BLOCK_NAME,
         hook_type: str = '90',
         layer: str = DEFAULT_SHAPE_LAYER,
+        template_path: str | Path | None = DEFAULT_LISTOFER_TEMPLATE,
+        block_scale: float = 0.08,
     ) -> None:
         if doc is None:
             self.acad: Any = win32com.client.Dispatch("AutoCAD.Application")
@@ -238,11 +255,238 @@ class LongitudinalRebarFromDwg:
         self.block_name = block_name
         self.hook_type = hook_type
         self.layer = layer
+        self.template_path = Path(template_path) if template_path else None
+        self.block_scale = float(block_scale)
+        self._template_blocks_ready = False
 
         self.blocks: list[Any] = []              # raw COM block references
         self.leaders: list[_LeaderInfo] = []     # cached leader geometry
         self.text_objects: list[tuple[int, str, tuple, float]] = []  # id,text,ip,h
         self.rebars: list[LongitudinalRebarData] = []
+
+    # ------------------------------------------------------------------
+    #  Template block loading
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _to_deg(rad: float) -> float:
+        return rad * 180.0 / math.pi
+
+    def _get_ezdxf(self):
+        try:
+            import ezdxf
+        except ImportError as exc:
+            raise ImportError(
+                "Install ezdxf to load listofer template blocks (pip install ezdxf)."
+            ) from exc
+        return ezdxf
+
+    def _entity_color(self, ent: Any) -> int | None:
+        try:
+            c = int(ent.dxf.color)
+            return c if c > 0 else None
+        except Exception:
+            return None
+
+    def _copy_template_entity_to_block(self, blk_com: Any, ent: Any) -> None:
+        etype = ent.dxftype()
+        color = self._entity_color(ent)
+        created = None
+
+        if etype == "LINE":
+            s = ent.dxf.start
+            e = ent.dxf.end
+            created = blk_com.AddLine(
+                _spoint3(s.x, s.y, getattr(s, "z", 0.0)),
+                _spoint3(e.x, e.y, getattr(e, "z", 0.0)),
+            )
+
+        elif etype == "ARC":
+            c = ent.dxf.center
+            created = blk_com.AddArc(
+                _spoint3(c.x, c.y, getattr(c, "z", 0.0)),
+                float(ent.dxf.radius),
+                float(ent.dxf.start_angle) * math.pi / 180.0,
+                float(ent.dxf.end_angle) * math.pi / 180.0,
+            )
+
+        elif etype == "CIRCLE":
+            c = ent.dxf.center
+            created = blk_com.AddCircle(
+                _spoint3(c.x, c.y, getattr(c, "z", 0.0)),
+                float(ent.dxf.radius),
+            )
+
+        elif etype == "LWPOLYLINE":
+            pts = list(ent.get_points("xyb"))
+            if len(pts) >= 2:
+                flat = []
+                for x, y, _bulge in pts:
+                    flat.extend([x, y])
+                pl = blk_com.AddLightWeightPolyline(
+                    win32com.client.VARIANT(
+                        pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                        tuple(flat),
+                    )
+                )
+                for i, (_x, _y, bulge) in enumerate(pts):
+                    if abs(float(bulge or 0.0)) > 1e-9:
+                        try:
+                            pl.SetBulge(i, float(bulge))
+                        except Exception:
+                            pass
+                try:
+                    pl.Closed = bool(ent.closed)
+                except Exception:
+                    pass
+                created = pl
+
+        elif etype == "TEXT":
+            ins = ent.dxf.insert
+            created = blk_com.AddText(
+                str(ent.dxf.text),
+                _spoint3(ins.x, ins.y, getattr(ins, "z", 0.0)),
+                float(getattr(ent.dxf, "height", 1.0) or 1.0),
+            )
+            try:
+                created.Rotation = float(getattr(ent.dxf, "rotation", 0.0) or 0.0) * math.pi / 180.0
+            except Exception:
+                pass
+
+        elif etype == "ATTDEF":
+            ins = ent.dxf.insert
+            created = blk_com.AddAttribute(
+                float(getattr(ent.dxf, "height", 1.0) or 1.0),
+                0,
+                str(getattr(ent.dxf, "prompt", ent.dxf.tag)),
+                _spoint3(ins.x, ins.y, getattr(ins, "z", 0.0)),
+                str(ent.dxf.tag),
+                str(getattr(ent.dxf, "text", "") or ""),
+            )
+
+        if created is not None and color is not None:
+            try:
+                created.Color = color
+            except Exception:
+                pass
+
+    def _ensure_template_blocks(self) -> None:
+        if self._template_blocks_ready:
+            return
+        if self.template_path is None:
+            return
+        if not self.template_path.exists():
+            print(f"Template not found: {self.template_path}")
+            return
+
+        needed = {"TI", "TL", "TU", "tc", "TO"}
+        try:
+            blocks = self.doc.Blocks
+            existing = {blocks.Item(i).Name for i in range(blocks.Count)}
+        except Exception:
+            existing = set()
+
+        missing = [name for name in needed if name not in existing]
+        if not missing:
+            self._template_blocks_ready = True
+            return
+
+        ezdxf = self._get_ezdxf()
+        readfile_fn = getattr(ezdxf, "readfile", None)
+        if readfile_fn is None:
+            from ezdxf import filemanagement as _filemanagement
+
+            readfile_fn = _filemanagement.readfile
+        tdoc = readfile_fn(str(self.template_path))
+
+        for bname in missing:
+            if bname not in tdoc.blocks:
+                continue
+            try:
+                blk_com = self.doc.Blocks.Add(_spoint3(0.0, 0.0, 0.0), bname)
+            except Exception:
+                continue
+            for ent in tdoc.blocks.get(bname):
+                try:
+                    self._copy_template_entity_to_block(blk_com, ent)
+                except Exception:
+                    continue
+
+        self._template_blocks_ready = True
+
+    def _set_block_attributes(self, block_ref: Any, values: dict[str, str]) -> None:
+        try:
+            attrs = block_ref.GetAttributes()
+        except Exception:
+            return
+        for at in attrs:
+            try:
+                tag = str(getattr(at, "TagString", "") or "").strip().upper()
+                if tag in values:
+                    at.TextString = str(values[tag])
+            except Exception:
+                continue
+
+    def _insert_template_shape_block(
+        self,
+        rd: LongitudinalRebarData,
+        x: float,
+        y_top: float,
+        width: float,
+        height: float,
+    ) -> bool:
+        self._ensure_template_blocks()
+
+        block_map = {
+            "I": "TI",
+            "L": "TL",
+            "U": "TU",
+        }
+        bname = block_map.get(rd.shape_type.upper(), "TI")
+
+        total_len = float(rd.length or 0.0)
+        bend_len = float(rd.bend_length or 0.0)
+        if rd.shape_type == "L":
+            straight = max(total_len - bend_len, 0.0)
+            attr_values = {
+                "L1": str(int(round(straight))),
+                "L2": str(int(round(bend_len))),
+                "L3": str(int(round(bend_len))),
+            }
+        elif rd.shape_type == "U":
+            straight = max(total_len - 2.0 * bend_len, 0.0)
+            attr_values = {
+                "L1": str(int(round(straight))),
+                "L2": str(int(round(bend_len))),
+                "L3": str(int(round(bend_len))),
+            }
+        else:
+            straight = max(total_len, 0.0)
+            # TI should not modify L2/L3 even if they exist in the block.
+            attr_values = {
+                "L1": str(int(round(straight))),
+            }
+
+        # Place by cell center; template block base-point controls exact location.
+        ins_x = x + width * 0.5
+        ins_y = y_top - height * 0.60
+
+        try:
+            bref = self.doc.ModelSpace.InsertBlock(
+                _spoint3(ins_x, ins_y, 0.0),
+                bname,
+                self.block_scale,
+                self.block_scale,
+                self.block_scale,
+                0.0,
+            )
+            try:
+                bref.Layer = self.layer
+            except Exception:
+                pass
+            self._set_block_attributes(bref, attr_values)
+            return True
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     #  MText cleanup
@@ -550,7 +794,7 @@ class LongitudinalRebarFromDwg:
         except Exception as exc:
             print(f"Layer setup warning: {exc}")
 
-    def _add_line(self, p1: tuple, p2: tuple) -> None:
+    def _add_line(self, p1: tuple, p2: tuple, color: int | None = None) -> None:
         """Add a line on the output layer."""
         try:
             line = self.doc.ModelSpace.AddLine(
@@ -559,10 +803,39 @@ class LongitudinalRebarFromDwg:
             )
             try:
                 line.Layer = self.layer
+                if color is not None:
+                    line.Color = color
             except Exception:
                 pass
         except Exception as exc:
             print(f"AddLine error: {exc}")
+
+    def _add_arc(
+        self,
+        center: tuple[float, float, float],
+        radius: float,
+        start_angle: float,
+        end_angle: float,
+        color: int | None = None,
+    ) -> None:
+        """Add an arc on the output layer."""
+        if radius <= 0:
+            return
+        try:
+            arc = self.doc.ModelSpace.AddArc(
+                _spoint3(center[0], center[1], center[2] if len(center) > 2 else 0.0),
+                radius,
+                start_angle,
+                end_angle,
+            )
+            try:
+                arc.Layer = self.layer
+                if color is not None:
+                    arc.Color = color
+            except Exception:
+                pass
+        except Exception as exc:
+            print(f"AddArc error: {exc}")
 
     def _draw_cell(self, x: float, y_top: float, width: float, height: float) -> None:
         """Draw a rectangular table cell as four lines."""
@@ -575,7 +848,14 @@ class LongitudinalRebarFromDwg:
         self._add_line(p3, p4)
         self._add_line(p4, p1)
 
-    def _add_text_center(self, text: str, x: float, y: float, text_h: float) -> None:
+    def _add_text_center(
+        self,
+        text: str,
+        x: float,
+        y: float,
+        text_h: float,
+        color: int | None = None,
+    ) -> None:
         """Add centered text at a point."""
         if not text:
             return
@@ -584,6 +864,8 @@ class LongitudinalRebarFromDwg:
             txt.Alignment = 4  # acAlignmentMiddleCenter
             txt.TextAlignmentPoint = _spoint3(x, y, 0.0)
             txt.Layer = self.layer
+            if color is not None:
+                txt.Color = color
         except Exception:
             pass
 
@@ -596,101 +878,21 @@ class LongitudinalRebarFromDwg:
         height: float,
         text_h: float,
     ) -> None:
-        """Draw TI/TL/TU schematic inside one table cell.
-
-        Conventions requested by user:
-        - L: bend is always on the LEFT side and directed downward.
-        - U: both bends are directed downward.
-        - Straight and bend dimensions are written near the shape.
-        """
-        margin_x = width * 0.2
-        margin_y = height * 0.2
-
-        x1 = x + margin_x
-        x2 = x + width - margin_x
-        y_mid = y_top - height * 0.42
-        shape_text_h = max(text_h * 0.7, 0.6)
-
-        usable_h = max(height - 2.0 * margin_y, 0.1)
-        bend = min(float(rd.bend_length or 0.0), usable_h)
-        total_len = float(rd.length or 0.0)
-        straight_len_i = max(total_len, 0.0)
-        straight_len_l = max(total_len - float(rd.bend_length or 0.0), 0.0)
-        straight_len_u = max(total_len - 2.0 * float(rd.bend_length or 0.0), 0.0)
-        bend_dim = str(int(round(float(rd.bend_length or 0.0))))
-
-        if rd.shape_type == "I":
-            self._add_line((x1, y_mid, 0.0), (x2, y_mid, 0.0))
-            self._add_text_center(
-                str(int(round(straight_len_i))),
-                x + width * 0.5,
-                y_mid + shape_text_h * 1.2,
-                shape_text_h,
+        """Insert TI/TL/TU block and rewrite L1/L2/L3 attributes only."""
+        _ = text_h  # shape text is inside template block attributes
+        ok = self._insert_template_shape_block(rd, x, y_top, width, height)
+        if not ok:
+            print(
+                "Template block insertion failed for shape "
+                f"T{rd.shape_type} (POS={rd.pos or '-'})"
             )
-            return
-
-        if rd.shape_type == "L":
-            # Left bend, directed downward.
-            self._add_line((x1, y_mid, 0.0), (x2, y_mid, 0.0))
-            self._add_line((x1, y_mid, 0.0), (x1, y_mid - bend, 0.0))
-            self._add_text_center(
-                str(int(round(straight_len_l))),
-                x + width * 0.5,
-                y_mid + shape_text_h * 1.2,
-                shape_text_h,
-            )
-            self._add_text_center(
-                bend_dim,
-                x1 - margin_x * 0.7,
-                y_mid - bend * 0.5,
-                shape_text_h,
-            )
-            return
-
-        if rd.shape_type == "U":
-            self._add_line((x1, y_mid, 0.0), (x2, y_mid, 0.0))
-            # Both bends directed downward.
-            self._add_line((x1, y_mid, 0.0), (x1, y_mid - bend, 0.0))
-            self._add_line((x2, y_mid, 0.0), (x2, y_mid - bend, 0.0))
-            self._add_text_center(
-                str(int(round(straight_len_u))),
-                x + width * 0.5,
-                y_mid + shape_text_h * 1.2,
-                shape_text_h,
-            )
-            self._add_text_center(
-                bend_dim,
-                x1 - margin_x * 0.7,
-                y_mid - bend * 0.5,
-                shape_text_h,
-            )
-            self._add_text_center(
-                bend_dim,
-                x2 + margin_x * 0.7,
-                y_mid - bend * 0.5,
-                shape_text_h,
-            )
-            return
-
-        self._add_line((x1, y_mid, 0.0), (x2, y_mid, 0.0))
-        self._add_text_center(
-            str(int(round(straight_len_i))),
-            x + width * 0.5,
-            y_mid + shape_text_h * 1.2,
-            shape_text_h,
-        )
 
     def draw_rebar_shapes(
         self,
         insert_point: tuple[float, float] = (0.0, 0.0),
         scale: float = 1.0,
     ) -> int:
-        """Draw a listofer-style table with a shape column inside AutoCAD.
-
-        This method intentionally does not draw bars from leader anchor points.
-        It draws a schedule table and sketches TI/TL/TU per row in the shape
-        column.
-        """
+        """Draw listofer table and fill shape column via template blocks."""
         if not self.rebars:
             print("No parsed rebars to draw.")
             return 0
