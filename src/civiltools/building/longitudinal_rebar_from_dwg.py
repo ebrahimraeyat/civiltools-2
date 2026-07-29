@@ -38,6 +38,8 @@ from __future__ import annotations
 import math
 import os
 import re
+import shutil
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,9 +57,24 @@ if os.path.isdir(_pywin32_system32):
     if _pywin32_system32 not in os.environ.get("PATH", ""):
         os.environ["PATH"] = _pywin32_system32 + os.pathsep + os.environ.get("PATH", "")
 
-import pythoncom  # noqa: E402
+import pythoncom  # noqa: E402,I001
 import win32com.client  # noqa: E402
 
+from civiltools.building.listofer_style import (  # noqa: E402
+    CELL_HEIGHT as DEFAULT_LONGITUDINAL_TABLE_CELL_H,
+    DEFAULT_LISTOFER_TEMPLATE,
+    DESCRIPTION_COL_WIDTH,
+    DIA_COL_WIDTH as DEFAULT_LONGITUDINAL_TABLE_DIA_COL_WIDTH,
+    HEADER_FILL_COLOR,
+    MIN_TEXT_HEIGHT as DEFAULT_LONGITUDINAL_TABLE_MIN_TEXT_H,
+    POS_COL_WIDTH,
+    ROW_COL_WIDTH,
+    SHAPE_COL_WIDTH,
+    SUMMARY_FILL_COLOR,
+    TEXT_HEIGHT_FACTOR as DEFAULT_LONGITUDINAL_TABLE_TEXT_FACTOR,
+    UNIT_WEIGHT_COL_WIDTH,
+    resolve_text_height,
+)
 from civiltools.building.rebar_from_dwg import calculate_hook_parameters  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -68,13 +85,12 @@ STEEL_DENSITY = 7850.0          # kg/m³
 STANDARD_BAR_LENGTH_M = 12.0    # standard rebar stock length
 DEFAULT_BLOCK_NAME = "buble"    # block reference name to look for
 DEFAULT_SHAPE_LAYER = "ListoferRebarShapes"
-DEFAULT_LISTOFER_TEMPLATE = (
-    Path(__file__).resolve().parents[1] / "dxf" / "templates" / "listofer_template.dxf"
-)
-ACI_YELLOW = 2
-ACI_BLUE = 5
-DEFAULT_LONGITUDINAL_TABLE_COL_WIDTHS = [10, 12, 34, 20, 12, 14, 14, 14]
-DEFAULT_LONGITUDINAL_TABLE_DIA_COL_WIDTH = 14.0
+# Fixed columns: Row, POS, Description, Shape (shared widths) + Count,
+# Len(cm), Bend(cm) (longitudinal-specific) + UnitW (shared width)
+DEFAULT_LONGITUDINAL_TABLE_COL_WIDTHS = [
+    ROW_COL_WIDTH, POS_COL_WIDTH, DESCRIPTION_COL_WIDTH, SHAPE_COL_WIDTH,
+    12, 14, 14, UNIT_WEIGHT_COL_WIDTH,
+]
 
 # All AutoCAD representations of the diameter symbol
 _DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ~T])'
@@ -489,6 +505,121 @@ class LongitudinalRebarFromDwg:
             return True
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    #  DXF export helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _current_doc_dir(doc: Any) -> Path:
+        """Return directory of active AutoCAD document, fallback to cwd."""
+        try:
+            full_name = str(getattr(doc, "FullName", "") or "").strip()
+            if full_name:
+                return Path(full_name).resolve().parent
+        except Exception:
+            pass
+        return Path.cwd().resolve()
+
+    def _resolve_output_dxf_path(
+        self,
+        output_path: str | Path | None,
+        filename: str | None,
+        prefix: str = "longitudinal_listofer",
+    ) -> Path:
+        """Build output DXF path next to current DWG unless explicit path is passed."""
+        if output_path is not None:
+            return Path(output_path).resolve()
+
+        out_dir = self._current_doc_dir(self.doc)
+        if filename:
+            name = filename
+            if not name.lower().endswith(".dxf"):
+                name += ".dxf"
+        else:
+            name = f"{prefix}_{uuid.uuid4().hex[:8]}.dxf"
+        return out_dir / name
+
+    @staticmethod
+    def _draw_cell_dxf(msp: Any, x: float, y_top: float, width: float, height: float) -> None:
+        """Draw one rectangular cell in a DXF modelspace."""
+        pts = [
+            (x, y_top),
+            (x + width, y_top),
+            (x + width, y_top - height),
+            (x, y_top - height),
+            (x, y_top),
+        ]
+        msp.add_lwpolyline(pts)
+
+    @staticmethod
+    def _add_text_center_dxf(
+        msp: Any,
+        text: str,
+        x: float,
+        y: float,
+        text_h: float,
+    ) -> None:
+        """Add centered text in DXF using MIDDLE_CENTER alignment."""
+        if not text:
+            return
+        from ezdxf.enums import TextEntityAlignment
+
+        txt = msp.add_text(str(text), dxfattribs={"height": text_h})
+        txt.set_placement((x, y), align=TextEntityAlignment.MIDDLE_CENTER)
+
+    def _insert_shape_block_dxf(
+        self,
+        msp: Any,
+        rd: LongitudinalRebarData,
+        x: float,
+        y_top: float,
+        width: float,
+        height: float,
+    ) -> bool:
+        """Insert TI/TL/TU block with L1/L2/L3 attributes in DXF modelspace."""
+        doc = msp.doc
+        block_map = {"I": "TI", "L": "TL", "U": "TU"}
+        bname = block_map.get(rd.shape_type.upper(), "TI")
+        if bname not in doc.blocks:
+            return False
+
+        total_len = float(rd.length or 0.0)
+        bend_len = float(rd.bend_length or 0.0)
+        if rd.shape_type == "L":
+            straight = max(total_len - bend_len, 0.0)
+            attr_values = {
+                "L1": str(int(round(straight))),
+                "L2": str(int(round(bend_len))),
+                "L3": str(int(round(bend_len))),
+            }
+        elif rd.shape_type == "U":
+            straight = max(total_len - 2.0 * bend_len, 0.0)
+            attr_values = {
+                "L1": str(int(round(straight))),
+                "L2": str(int(round(bend_len))),
+                "L3": str(int(round(bend_len))),
+            }
+        else:
+            straight = max(total_len, 0.0)
+            attr_values = {"L1": str(int(round(straight)))}
+
+        insert_x = x + width * 0.5
+        insert_y = y_top - height * 0.60
+        bref = msp.add_blockref(
+            bname,
+            (insert_x, insert_y),
+            dxfattribs={
+                "xscale": self.block_scale,
+                "yscale": self.block_scale,
+                "zscale": self.block_scale,
+                "rotation": 0.0,
+            },
+        )
+        try:
+            bref.add_auto_attribs(attr_values)
+        except Exception:
+            pass
+        return True
 
     # ------------------------------------------------------------------
     #  MText cleanup
@@ -942,11 +1073,17 @@ class LongitudinalRebarFromDwg:
         def draw_label_row(label: str, dia_values: list[str]) -> None:
             nonlocal y
             self._draw_cell(x0, y, label_width, cell_h)
-            self._add_text_center(label, x0 + label_width * 0.5, y - cell_h * 0.5, text_h)
+            self._add_text_center(
+                label, x0 + label_width * 0.5, y - cell_h * 0.5, text_h,
+                color=SUMMARY_FILL_COLOR,
+            )
             x = x0 + label_width
             for width, value in zip(dia_widths, dia_values):
                 self._draw_cell(x, y, width, cell_h)
-                self._add_text_center(value, x + width * 0.5, y - cell_h * 0.5, text_h)
+                self._add_text_center(
+                    value, x + width * 0.5, y - cell_h * 0.5, text_h,
+                    color=SUMMARY_FILL_COLOR,
+                )
                 x += width
             y -= cell_h
 
@@ -968,7 +1105,8 @@ class LongitudinalRebarFromDwg:
         # Grand total: merged label cell + merged value cell spanning all sizes
         self._draw_cell(x0, y, label_width, cell_h)
         self._add_text_center(
-            "GRAND TOTAL (Kg)", x0 + label_width * 0.5, y - cell_h * 0.5, text_h
+            "GRAND TOTAL (Kg)", x0 + label_width * 0.5, y - cell_h * 0.5, text_h,
+            color=SUMMARY_FILL_COLOR,
         )
         dia_total_width = sum(dia_widths)
         self._draw_cell(x0 + label_width, y, dia_total_width, cell_h)
@@ -977,6 +1115,7 @@ class LongitudinalRebarFromDwg:
             x0 + label_width + dia_total_width * 0.5,
             y - cell_h * 0.5,
             text_h,
+            color=SUMMARY_FILL_COLOR,
         )
 
     def draw_rebar_shapes(
@@ -994,8 +1133,13 @@ class LongitudinalRebarFromDwg:
         self._ensure_layer()
 
         x0, y0 = insert_point
-        cell_h = 8.0 * scale
-        text_h = max(2.2 * scale, 0.8)
+        cell_h = DEFAULT_LONGITUDINAL_TABLE_CELL_H * scale
+        text_h = resolve_text_height(
+            scale,
+            text_height_factor=DEFAULT_LONGITUDINAL_TABLE_TEXT_FACTOR,
+            cell_height=DEFAULT_LONGITUDINAL_TABLE_CELL_H,
+            min_text_height=DEFAULT_LONGITUDINAL_TABLE_MIN_TEXT_H,
+        )
 
         dias = self._used_diameters()
         headers, fixed_col_count = self._longitudinal_table_headers(dias)
@@ -1010,7 +1154,9 @@ class LongitudinalRebarFromDwg:
         x = x0
         for w, htxt in zip(scaled_col_widths, headers):
             self._draw_cell(x, y, w, cell_h)
-            self._add_text_center(htxt, x + w * 0.5, y - cell_h * 0.5, text_h)
+            self._add_text_center(
+                htxt, x + w * 0.5, y - cell_h * 0.5, text_h, color=HEADER_FILL_COLOR,
+            )
             x += w
         y -= cell_h
 
@@ -1058,6 +1204,191 @@ class LongitudinalRebarFromDwg:
 
         print(f"Drew listofer table with {row_count} row(s) on layer '{self.layer}'.")
         return row_count
+
+    def _draw_longitudinal_summary_dxf(
+        self,
+        msp: Any,
+        dias: list[int],
+        x0: float,
+        y: float,
+        col_widths: list[float],
+        cell_h: float,
+        text_h: float,
+        fixed_col_count: int,
+    ) -> None:
+        """DXF equivalent of :meth:`_draw_longitudinal_summary`."""
+        if not dias:
+            return
+        length_map, weight_map, grand_weight = self._diameter_summary_maps(
+            self.summary_by_size()
+        )
+        label_width = sum(col_widths[:fixed_col_count])
+        dia_widths = col_widths[fixed_col_count:]
+
+        def draw_label_row(label: str, dia_values: list[str]) -> None:
+            nonlocal y
+            self._draw_cell_dxf(msp, x0, y, label_width, cell_h)
+            self._add_text_center_dxf(
+                msp, label, x0 + label_width * 0.5, y - cell_h * 0.5, text_h
+            )
+            x = x0 + label_width
+            for width, value in zip(dia_widths, dia_values):
+                self._draw_cell_dxf(msp, x, y, width, cell_h)
+                self._add_text_center_dxf(msp, value, x + width * 0.5, y - cell_h * 0.5, text_h)
+                x += width
+            y -= cell_h
+
+        draw_label_row(
+            "TOTAL LENGTH (m)", [f"{length_map.get(d, 0.0):.2f}" for d in dias]
+        )
+        draw_label_row(
+            "TOTAL WEIGHT (Kg)", [f"{weight_map.get(d, 0.0):.2f}" for d in dias]
+        )
+        draw_label_row(
+            "PERCENTAGE (%)",
+            [
+                f"{(weight_map.get(d, 0.0) / grand_weight * 100.0):.0f}%"
+                if grand_weight else "0%"
+                for d in dias
+            ],
+        )
+
+        self._draw_cell_dxf(msp, x0, y, label_width, cell_h)
+        self._add_text_center_dxf(
+            msp, "GRAND TOTAL (Kg)", x0 + label_width * 0.5, y - cell_h * 0.5, text_h
+        )
+        dia_total_width = sum(dia_widths)
+        self._draw_cell_dxf(msp, x0 + label_width, y, dia_total_width, cell_h)
+        self._add_text_center_dxf(
+            msp,
+            f"{grand_weight:.2f} Kg.",
+            x0 + label_width + dia_total_width * 0.5,
+            y - cell_h * 0.5,
+            text_h,
+        )
+
+    def draw_table_to_dxf(
+        self,
+        insert_point: tuple[float, float] = (0.0, 0.0),
+        scale: float = 1.0,
+        col_widths: list[float] | None = None,
+        dia_col_width: float = DEFAULT_LONGITUDINAL_TABLE_DIA_COL_WIDTH,
+        cell_height: float = DEFAULT_LONGITUDINAL_TABLE_CELL_H,
+        text_height: float | None = None,
+        min_text_height: float = DEFAULT_LONGITUDINAL_TABLE_MIN_TEXT_H,
+        output_path: str | Path | None = None,
+        filename: str | None = None,
+        open_file: bool = True,
+    ) -> Path:
+        """Write the longitudinal-rebar listofer into a DXF file (template copy + write + open)."""
+        if not self.rebars:
+            raise ValueError("No parsed rebars to draw. Call parse_longitudinal_rebars() first.")
+
+        try:
+            import ezdxf
+        except ImportError as exc:
+            raise ImportError(
+                "ezdxf is required for DXF output. Install: pip install ezdxf"
+            ) from exc
+
+        readfile_fn = getattr(ezdxf, "readfile", None)
+        if readfile_fn is None:
+            from ezdxf import filemanagement as _filemanagement
+
+            readfile_fn = _filemanagement.readfile
+
+        new_fn = getattr(ezdxf, "new", None)
+        if new_fn is None:
+            from ezdxf import filemanagement as _filemanagement
+
+            new_fn = _filemanagement.new
+
+        out_path = self._resolve_output_dxf_path(output_path, filename)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.template_path and self.template_path.exists():
+            shutil.copy2(self.template_path, out_path)
+            dxf_doc = readfile_fn(str(out_path))
+        else:
+            dxf_doc = new_fn("R2010")
+
+        msp = dxf_doc.modelspace()
+        x0, y0 = insert_point
+
+        dias = self._used_diameters()
+        headers, fixed_col_count = self._longitudinal_table_headers(dias)
+
+        cell_h = cell_height * scale
+        width_base = col_widths or DEFAULT_LONGITUDINAL_TABLE_COL_WIDTHS
+        scaled_col_widths = [w * scale for w in width_base] + [
+            dia_col_width * scale for _ in dias
+        ]
+        text_h = resolve_text_height(
+            scale,
+            text_height,
+            text_height_factor=DEFAULT_LONGITUDINAL_TABLE_TEXT_FACTOR,
+            cell_height=cell_height,
+            min_text_height=min_text_height,
+        )
+
+        # Header row
+        y = y0
+        x = x0
+        for width, title in zip(scaled_col_widths, headers):
+            self._draw_cell_dxf(msp, x, y, width, cell_h)
+            self._add_text_center_dxf(msp, title, x + width * 0.5, y - cell_h * 0.5, text_h)
+            x += width
+        y -= cell_h
+
+        # Data rows
+        for i, rd in enumerate(self.rebars, 1):
+            x = x0
+            desc = ""
+            if rd.count is not None and rd.diameter is not None and rd.length is not None:
+                desc = f"{rd.count}T{rd.diameter} L={int(round(rd.length))}"
+
+            unit_w = rd.unit_weight()
+            total_w = rd.weight_kg()
+
+            values = [
+                str(i),
+                rd.pos or "",
+                desc,
+                "",  # shape cell drawn graphically
+                str(rd.count or ""),
+                str(int(round(rd.length))) if rd.length is not None else "",
+                f"{rd.bend_length:.1f}" if rd.shape_type != "I" else "0",
+                f"{unit_w:.3f}" if unit_w is not None else "",
+            ]
+            for dia in dias:
+                values.append(
+                    f"{total_w:.2f}" if rd.diameter == dia and total_w is not None else ""
+                )
+
+            for col_idx, (width, value) in enumerate(zip(scaled_col_widths, values)):
+                self._draw_cell_dxf(msp, x, y, width, cell_h)
+                if col_idx == 3:
+                    self._insert_shape_block_dxf(msp, rd, x, y, width, cell_h)
+                else:
+                    self._add_text_center_dxf(
+                        msp, value, x + width * 0.5, y - cell_h * 0.5, text_h
+                    )
+                x += width
+            y -= cell_h
+
+        self._draw_longitudinal_summary_dxf(
+            msp, dias, x0, y, scaled_col_widths, cell_h, text_h, fixed_col_count,
+        )
+
+        dxf_doc.saveas(str(out_path))
+        if open_file and os.name == "nt":
+            try:
+                os.startfile(str(out_path))
+            except OSError:
+                pass
+
+        print(f"DXF listofer saved: {out_path}")
+        return out_path
 
     # ------------------------------------------------------------------
     #  Summaries

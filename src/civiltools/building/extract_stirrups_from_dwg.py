@@ -48,6 +48,23 @@ if os.path.isdir(_pywin32_system32):
 import pythoncom        # noqa: E402,I001
 import win32com.client  # noqa: E402
 
+from civiltools.building.listofer_style import (  # noqa: E402
+    CELL_HEIGHT as DEFAULT_STIRRUP_TABLE_CELL_H,
+    DEFAULT_LISTOFER_TEMPLATE,
+    DESCRIPTION_COL_WIDTH,
+    DIA_COL_WIDTH as DEFAULT_STIRRUP_TABLE_DIA_COL_WIDTH,
+    HEADER_FILL_COLOR,
+    MIN_TEXT_HEIGHT as DEFAULT_STIRRUP_TABLE_MIN_TEXT_H,
+    POS_COL_WIDTH,
+    ROW_COL_WIDTH,
+    SHAPE_COL_WIDTH,
+    SUMMARY_FILL_COLOR,
+    TEXT_HEIGHT as DEFAULT_STIRRUP_TABLE_TEXT_H,
+    TEXT_HEIGHT_FACTOR as DEFAULT_STIRRUP_TABLE_TEXT_FACTOR,
+    UNIT_WEIGHT_COL_WIDTH,
+    resolve_text_height,
+)
+
 # ---------------------------------------------------------------------------
 #  Constants
 # ---------------------------------------------------------------------------
@@ -56,15 +73,12 @@ STEEL_DENSITY = 7850.0          # kg/m³
 CONCRETE_COVER_CM = 4.0         # concrete cover for beams (cm)
 DEFAULT_HOOK_FACTOR = 10.0      # hook length = factor × diameter
 STANDARD_BAR_LENGTH_M = 12.0    # standard rebar stock length
-DEFAULT_LISTOFER_TEMPLATE = (
-    Path(__file__).resolve().parents[1] / "dxf" / "templates" / "listofer_template.dxf"
-)
-DEFAULT_STIRRUP_TABLE_COL_WIDTHS = [10, 12, 25, 18, 12, 10, 14, 8, 8, 8, 14, 12, 14]
-DEFAULT_STIRRUP_TABLE_DIA_COL_WIDTH = 12.0
-DEFAULT_STIRRUP_TABLE_CELL_H = 8.0
-DEFAULT_STIRRUP_TABLE_TEXT_H = .2
-DEFAULT_STIRRUP_TABLE_MIN_TEXT_H = 0.2
-DEFAULT_STIRRUP_TABLE_TEXT_FACTOR = 0.35
+# Fixed columns: Row, POS, Description, Shape (shared widths) + Zone, Spc,
+# ZoneLen, Cnt, B, H, SingleL, TotalL, UnitW (stirrup-specific/shared widths)
+DEFAULT_STIRRUP_TABLE_COL_WIDTHS = [
+    ROW_COL_WIDTH, POS_COL_WIDTH, DESCRIPTION_COL_WIDTH, SHAPE_COL_WIDTH,
+    12, 10, 14, 8, 8, 8, 14, 12, UNIT_WEIGHT_COL_WIDTH,
+]
 
 # All AutoCAD representations of the diameter symbol
 _DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ~T])'
@@ -1419,11 +1433,17 @@ class StirrupTableDrawer:
         def draw_label_row(label: str, dia_values: list[str]) -> None:
             nonlocal y
             self._draw_cell_acad(x0, y, label_width, cell_h)
-            self._add_text_center_acad(label, x0 + label_width * 0.5, y - cell_h * 0.5, text_h)
+            self._add_text_center_acad(
+                label, x0 + label_width * 0.5, y - cell_h * 0.5, text_h,
+                color=SUMMARY_FILL_COLOR,
+            )
             x = x0 + label_width
             for width, value in zip(dia_widths, dia_values):
                 self._draw_cell_acad(x, y, width, cell_h)
-                self._add_text_center_acad(value, x + width * 0.5, y - cell_h * 0.5, text_h)
+                self._add_text_center_acad(
+                    value, x + width * 0.5, y - cell_h * 0.5, text_h,
+                    color=SUMMARY_FILL_COLOR,
+                )
                 x += width
             y -= cell_h
 
@@ -1445,7 +1465,8 @@ class StirrupTableDrawer:
         # Grand total: merged label cell + merged value cell spanning all sizes
         self._draw_cell_acad(x0, y, label_width, cell_h)
         self._add_text_center_acad(
-            "GRAND TOTAL (Kg)", x0 + label_width * 0.5, y - cell_h * 0.5, text_h
+            "GRAND TOTAL (Kg)", x0 + label_width * 0.5, y - cell_h * 0.5, text_h,
+            color=SUMMARY_FILL_COLOR,
         )
         dia_total_width = sum(dia_widths)
         self._draw_cell_acad(x0 + label_width, y, dia_total_width, cell_h)
@@ -1576,7 +1597,7 @@ class StirrupTableDrawer:
         scaled_col_widths = [w * scale for w in width_base] + [
             dia_col_width * scale for _ in dias
         ]
-        text_h = max(text_height * scale, min_text_height)
+        text_h = resolve_text_height(scale, text_height, min_text_height=min_text_height)
 
         y = y0
         x = x0
@@ -1654,8 +1675,8 @@ class StirrupTableDrawer:
         scaled_col_widths = [w * scale for w in width_base] + [
             dia_col_width * scale for _ in dias
         ]
-        row_text_h = text_height * scale if text_height is not None else max(
-            cell_h * text_height_factor,
+        row_text_h = resolve_text_height(
+            scale, text_height, text_height_factor, cell_height,
             DEFAULT_STIRRUP_TABLE_MIN_TEXT_H,
         )
 
@@ -1667,7 +1688,7 @@ class StirrupTableDrawer:
             scaled_col_widths,
             cell_h,
             headers,
-            fill_color=5,
+            fill_color=HEADER_FILL_COLOR,
             text_height=row_text_h,
         )
         y -= cell_h
