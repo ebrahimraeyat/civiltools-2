@@ -75,7 +75,10 @@ from civiltools.building.listofer_style import (  # noqa: E402
     UNIT_WEIGHT_COL_WIDTH,
     resolve_text_height,
 )
-from civiltools.building.rebar_from_dwg import calculate_hook_parameters  # noqa: E402
+from civiltools.building.rebar_from_dwg import (  # noqa: E402
+    calculate_hook_parameters,
+    calculate_length_with_hooks,
+)
 
 # ---------------------------------------------------------------------------
 #  Constants
@@ -85,8 +88,8 @@ STEEL_DENSITY = 7850.0          # kg/m³
 STANDARD_BAR_LENGTH_M = 12.0    # standard rebar stock length
 DEFAULT_BLOCK_NAME = "buble"    # block reference name to look for
 DEFAULT_SHAPE_LAYER = "ListoferRebarShapes"
-# Fixed columns: Row, POS, Description, Shape (shared widths) + Count,
-# Len(cm), Bend(cm) (longitudinal-specific) + UnitW (shared width)
+# Fixed columns: Row, POS, Description, Shape (shared widths) + Cnt,
+# Len, Bend (longitudinal-specific) + UnitW (shared width)
 DEFAULT_LONGITUDINAL_TABLE_COL_WIDTHS = [
     ROW_COL_WIDTH, POS_COL_WIDTH, DESCRIPTION_COL_WIDTH, SHAPE_COL_WIDTH,
     12, 14, 14, UNIT_WEIGHT_COL_WIDTH,
@@ -140,21 +143,15 @@ def _unit_weight(diameter_mm: float) -> float:
 
 
 def _bend_length_cm(diameter_mm: float, hook_type: str = '90') -> tuple[float, list[str]]:
-    """Compute bend dimension in cm as ``bend_radius + straight_tail``.
+    """Compute bend dimension in cm via :func:`calculate_length_with_hooks`.
 
-    ``calculate_hook_parameters`` returns ``(internal_bend_diameter_mm,
-    straight_extension_mm)``.  The bend size used for drawing/text equals:
-
-    ``internal_bend_diameter_mm / 2 + straight_extension_mm``  (then mm -> cm)
-
-    Falls back to ``16 * d / 10`` cm when the diameter is out of the
-    function's supported range, recording a warning.
+    Longitudinal rebar bends are 90-degree hooks by default. Falls back to
+    ``16 * d / 10`` cm when the diameter is out of the function's supported
+    range, recording a warning.
     """
     warnings: list[str] = []
     try:
-        bend_dia_mm, tail_mm = calculate_hook_parameters(diameter_mm, hook_type)
-        bend_radius_mm = bend_dia_mm / 2.0
-        bend_size_cm = (bend_radius_mm + tail_mm) / 10.0
+        bend_size_cm = calculate_length_with_hooks(diameter_mm, hook_type)
         return round(bend_size_cm, 2), warnings
     except ValueError:
         warnings.append(
@@ -260,7 +257,7 @@ class LongitudinalRebarFromDwg:
         hook_type: str = '90',
         layer: str = DEFAULT_SHAPE_LAYER,
         template_path: str | Path | None = DEFAULT_LISTOFER_TEMPLATE,
-        block_scale: float = 0.08,
+        block_scale: float = 0.8,
     ) -> None:
         if doc is None:
             self.acad: Any = win32com.client.Dispatch("AutoCAD.Application")
@@ -451,6 +448,7 @@ class LongitudinalRebarFromDwg:
         y_top: float,
         width: float,
         height: float,
+        scale: float = 1.0,
     ) -> bool:
         self._ensure_template_blocks()
 
@@ -487,14 +485,15 @@ class LongitudinalRebarFromDwg:
         # Place by cell center; template block base-point controls exact location.
         ins_x = x + width * 0.5
         ins_y = y_top - height * 0.60
+        block_scale = self.block_scale * scale
 
         try:
             bref = self.doc.ModelSpace.InsertBlock(
                 _spoint3(ins_x, ins_y, 0.0),
                 bname,
-                self.block_scale,
-                self.block_scale,
-                self.block_scale,
+                block_scale,
+                block_scale,
+                block_scale,
                 0.0,
             )
             try:
@@ -575,6 +574,7 @@ class LongitudinalRebarFromDwg:
         y_top: float,
         width: float,
         height: float,
+        scale: float = 1.0,
     ) -> bool:
         """Insert TI/TL/TU block with L1/L2/L3 attributes in DXF modelspace."""
         doc = msp.doc
@@ -605,13 +605,14 @@ class LongitudinalRebarFromDwg:
 
         insert_x = x + width * 0.5
         insert_y = y_top - height * 0.60
+        block_scale = self.block_scale * scale
         bref = msp.add_blockref(
             bname,
             (insert_x, insert_y),
             dxfattribs={
-                "xscale": self.block_scale,
-                "yscale": self.block_scale,
-                "zscale": self.block_scale,
+                "xscale": block_scale,
+                "yscale": block_scale,
+                "zscale": block_scale,
                 "rotation": 0.0,
             },
         )
@@ -1010,10 +1011,11 @@ class LongitudinalRebarFromDwg:
         width: float,
         height: float,
         text_h: float,
+        scale: float = 1.0,
     ) -> None:
         """Insert TI/TL/TU block and rewrite L1/L2/L3 attributes only."""
         _ = text_h  # shape text is inside template block attributes
-        ok = self._insert_template_shape_block(rd, x, y_top, width, height)
+        ok = self._insert_template_shape_block(rd, x, y_top, width, height, scale)
         if not ok:
             print(
                 "Template block insertion failed for shape "
@@ -1027,7 +1029,7 @@ class LongitudinalRebarFromDwg:
     @staticmethod
     def _longitudinal_table_headers(dias: list[int]) -> tuple[list[str], int]:
         """Build table headers: fixed columns + one column per used diameter."""
-        fixed = ["Row", "POS", "Description", "Shape", "Count", "Len(cm)", "Bend(cm)", "UnitW"]
+        fixed = ["Row", "POS", "Description", "Shape", "Cnt", "Len", "Bend", "UnitW"]
         headers = fixed + [f"T{d}" for d in dias]
         return headers, len(fixed)
 
@@ -1189,7 +1191,7 @@ class LongitudinalRebarFromDwg:
             for col_idx, (w, value) in enumerate(zip(scaled_col_widths, values)):
                 self._draw_cell(x, y, w, cell_h)
                 if col_idx == 3:
-                    self._draw_shape_in_cell(rd, x, y, w, cell_h, text_h)
+                    self._draw_shape_in_cell(rd, x, y, w, cell_h, text_h, scale)
                 else:
                     self._add_text_center(value, x + w * 0.5, y - cell_h * 0.5, text_h)
                 x += w
@@ -1368,7 +1370,7 @@ class LongitudinalRebarFromDwg:
             for col_idx, (width, value) in enumerate(zip(scaled_col_widths, values)):
                 self._draw_cell_dxf(msp, x, y, width, cell_h)
                 if col_idx == 3:
-                    self._insert_shape_block_dxf(msp, rd, x, y, width, cell_h)
+                    self._insert_shape_block_dxf(msp, rd, x, y, width, cell_h, scale)
                 else:
                     self._add_text_center_dxf(
                         msp, value, x + width * 0.5, y - cell_h * 0.5, text_h

@@ -64,6 +64,7 @@ from civiltools.building.listofer_style import (  # noqa: E402
     UNIT_WEIGHT_COL_WIDTH,
     resolve_text_height,
 )
+from civiltools.building.rebar_from_dwg import calculate_length_with_hooks  # noqa: E402
 
 # ---------------------------------------------------------------------------
 #  Constants
@@ -71,7 +72,8 @@ from civiltools.building.listofer_style import (  # noqa: E402
 
 STEEL_DENSITY = 7850.0          # kg/m³
 CONCRETE_COVER_CM = 4.0         # concrete cover for beams (cm)
-DEFAULT_HOOK_FACTOR = 10.0      # hook length = factor × diameter
+DEFAULT_HOOK_FACTOR = 10.0      # hook length = factor × diameter (legacy, StirrupShapeDrawer only)
+DEFAULT_STIRRUP_HOOK_TYPE = "135"  # stirrup hooks are 135-degree bends
 STANDARD_BAR_LENGTH_M = 12.0    # standard rebar stock length
 # Fixed columns: Row, POS, Description, Shape (shared widths) + Zone, Spc,
 # ZoneLen, Cnt, B, H, SingleL, TotalL, UnitW (stirrup-specific/shared widths)
@@ -206,7 +208,7 @@ def calculate_stirrup_length(
     diameter_mm: float,
     beam: BeamDimensions,
     cover_cm: float = CONCRETE_COVER_CM,
-    hook_factor: float = DEFAULT_HOOK_FACTOR,
+    hook_type: str = DEFAULT_STIRRUP_HOOK_TYPE,
 ) -> float:
     """Calculate the cutting length of one closed stirrup (metres).
 
@@ -218,21 +220,21 @@ def calculate_stirrup_length(
 
         h_eff = beam.height − 2×cover
         b_eff = beam.width  − 2×cover
-        hook  = hook_factor × d_cm
+        hook  = calculate_length_with_hooks(diameter_mm, hook_type)
 
     Args:
         diameter_mm: stirrup bar diameter in millimetres.
         beam: BeamDimensions instance.
         cover_cm: concrete cover in centimetres.
-        hook_factor: hook length = factor × bar diameter.
+        hook_type: hook bend angle, '90' / '135' / '180'. Stirrup hooks are
+            135-degree bends by default.
 
     Returns:
         Cutting length in metres, rounded to 3 decimals.
     """
-    d_cm = diameter_mm / 10.0
     h_eff = beam.height - 2 * cover_cm
     b_eff = beam.width - 2 * cover_cm
-    hook_length = hook_factor * d_cm / 100.0  # cm → m
+    hook_length = calculate_length_with_hooks(diameter_mm, hook_type) / 100.0  # cm → m
 
     perimeter = 2 * (h_eff + b_eff) / 100.0   # cm → m
     total = perimeter + 2 * hook_length
@@ -279,7 +281,7 @@ class StirrupFromDwg:
         self,
         beam_dims: BeamDimensions | None = None,
         cover_cm: float = CONCRETE_COVER_CM,
-        hook_factor: float = DEFAULT_HOOK_FACTOR,
+        hook_type: str = DEFAULT_STIRRUP_HOOK_TYPE,
     ) -> None:
         self.acad: Any = win32com.client.Dispatch("AutoCAD.Application")
         self.acad.Visible = True
@@ -288,7 +290,7 @@ class StirrupFromDwg:
         self.stirrup_zones: list[StirrupZone] = []
         self.beam = beam_dims or BeamDimensions()
         self.cover = cover_cm
-        self.hook_factor = hook_factor
+        self.hook_type = hook_type
 
     # ------------------------------------------------------------------
     #  MText cleanup
@@ -684,7 +686,7 @@ class StirrupFromDwg:
             # Calculate derived values
             # single_length is always calculated (doesn't depend on zone_length)
             zone.single_length = calculate_stirrup_length(
-                zone.diameter, zone.beam, self.cover, self.hook_factor)
+                zone.diameter, zone.beam, self.cover, self.hook_type)
             zone.unit_weight = calculate_unit_weight(zone.diameter)
 
             if zone.zone_length > 0:
@@ -1164,11 +1166,11 @@ class StirrupTableDrawer:
         self,
         zone: StirrupZone,
         cover_cm: float,
-        hook_factor: float,
+        hook_type: str,
     ) -> dict[str, str]:
         width_cm = max(float(zone.beam.width) - 2.0 * cover_cm, 0.0)
         height_cm = max(float(zone.beam.height) - 2.0 * cover_cm, 0.0)
-        hook_cm = max(hook_factor * (float(zone.diameter) / 10.0), 0.0)
+        hook_cm = max(calculate_length_with_hooks(float(zone.diameter), hook_type), 0.0)
         return {
             "L1": str(int(round(width_cm))),
             "L2": str(int(round(height_cm))),
@@ -1183,7 +1185,7 @@ class StirrupTableDrawer:
         width: float,
         height: float,
         cover_cm: float,
-        hook_factor: float,
+        hook_type: str,
     ) -> None:
         self._ensure_template_blocks()
         insert_x = x + width * 0.5
@@ -1206,7 +1208,7 @@ class StirrupTableDrawer:
 
         self._set_block_attributes(
             block_ref,
-            self._stirrup_shape_values(zone, cover_cm, hook_factor),
+            self._stirrup_shape_values(zone, cover_cm, hook_type),
         )
 
     @staticmethod
@@ -1276,14 +1278,14 @@ class StirrupTableDrawer:
         width: float,
         height: float,
         cover_cm: float,
-        hook_factor: float,
+        hook_type: str,
     ) -> None:
         """Insert TO block with L1/L2/L3 attributes in DXF modelspace."""
         doc = msp.doc
         if "TO" not in doc.blocks:
             return
 
-        values = self._stirrup_shape_values(zone, cover_cm, hook_factor)
+        values = self._stirrup_shape_values(zone, cover_cm, hook_type)
         insert_x = x + width * 0.5
         insert_y = y_top - height * 0.60
         bref = msp.add_blockref(
@@ -1587,7 +1589,7 @@ class StirrupTableDrawer:
         x0, y0 = insert_point
         zones = extractor.stirrup_zones
         cover_cm = extractor.cover
-        hook_factor = extractor.hook_factor
+        hook_type = extractor.hook_type
 
         dias = self._used_diameters(zones)
         headers, fixed_col_count = self._stirrup_table_headers(dias)
@@ -1623,7 +1625,7 @@ class StirrupTableDrawer:
                         width,
                         cell_h,
                         cover_cm,
-                        hook_factor,
+                        hook_type,
                     )
                 else:
                     self._add_text_center_dxf(
@@ -1665,7 +1667,7 @@ class StirrupTableDrawer:
         x0, y0 = insert_point
         zones = extractor.stirrup_zones
         cover_cm = extractor.cover
-        hook_factor = extractor.hook_factor
+        hook_type = extractor.hook_type
 
         dias = self._used_diameters(zones)
         headers, fixed_col_count = self._stirrup_table_headers(dias)
@@ -1712,7 +1714,7 @@ class StirrupTableDrawer:
                     cw,
                     ch,
                     cover_cm,
-                    hook_factor,
+                    hook_type,
                 ),
             )
             y -= cell_h
@@ -1885,7 +1887,7 @@ class StirrupShapeDrawer:
 def demo():
     """Run a demonstration with sample data (no AutoCAD required)."""
     beam = BeamDimensions(width=60.0, height=70.0)
-    extractor = StirrupFromDwg(beam_dims=beam, cover_cm=4.0, hook_factor=10.0)
+    extractor = StirrupFromDwg(beam_dims=beam, cover_cm=4.0, hook_type="135")
 
     # Manually create sample zones (as if parsed from AutoCAD)
     zone1 = StirrupZone(
@@ -1916,7 +1918,7 @@ def demo():
     print("=" * 60)
     print(f"Beam: {beam.width} x {beam.height} cm")
     print(f"Cover: {extractor.cover} cm")
-    print(f"Hook factor: {extractor.hook_factor}d")
+    print(f"Hook type: {extractor.hook_type}-degree")
     print("-" * 60)
 
     for z in extractor.stirrup_zones:
@@ -1933,8 +1935,8 @@ def demo():
 
     # Verify single_length calculation
     print("\n--- Verification ---")
-    test_len = calculate_stirrup_length(12, beam, 4.0, 10.0)
-    print(f"calculate_stirrup_length(12mm, 60x70cm, cover=4cm, hook=10d) = {test_len} m")
+    test_len = calculate_stirrup_length(12, beam, 4.0, "135")
+    print(f"calculate_stirrup_length(12mm, 60x70cm, cover=4cm, hook=135deg) = {test_len} m")
     test_wt = calculate_unit_weight(12)
     print(f"calculate_unit_weight(12mm) = {test_wt} kg/m")
 

@@ -547,8 +547,33 @@ def calculate_hook_parameters(diameter_mm: float, hook_type: str) -> tuple[float
         else:          # Range: greater than 16 mm up to 90 mm
             bend_diameter = 6 * db
         straight_length = max(75, 6 * db)
+    elif hook_type == '180':
+        if db <= 16:   # Range: 10 to 16 mm
+            bend_diameter = 4 * db
+            # Maximum of 75 mm or 6*db (minimum code requirement)
+        else:          # Range: greater than 16 mm up to 90 mm
+            bend_diameter = 6 * db
+        straight_length = max(65, 4 * db)
     else:
-        raise ValueError("Hook type must be '90' or '135'.")
+        raise ValueError("Hook type must be '90', '135' or '180'.")
 
     return bend_diameter, straight_length
 
+def calculate_length_with_hooks(diameter_mm: float, hook_type: str) -> float:
+    """
+    Calculate the total length of a rebar including hooks.
+
+    Args:
+        diameter_mm (float): The nominal diameter of the rebar in millimeters.
+        hook_type (str): Type of hook, either '90', '135', or '180'.
+
+    Returns:
+        float: Total length of the rebar including hooks in centimeters.
+    """
+    bend_diameter, straight_length = calculate_hook_parameters(diameter_mm, hook_type)
+    # Convert straight length from mm to cm
+    straight_length_cm = straight_length / 10.0
+    # Total length is base length plus two hooks (one at each end)
+    mid_bend_radus_cm = (bend_diameter + diameter_mm) / 20.0  # Convert diameter to center radius in cm
+    total_length_cm = mid_bend_radus_cm + straight_length_cm
+    return total_length_cm
