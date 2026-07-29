@@ -73,6 +73,8 @@ DEFAULT_LISTOFER_TEMPLATE = (
 )
 ACI_YELLOW = 2
 ACI_BLUE = 5
+DEFAULT_LONGITUDINAL_TABLE_COL_WIDTHS = [10, 12, 34, 20, 12, 14, 14, 14]
+DEFAULT_LONGITUDINAL_TABLE_DIA_COL_WIDTH = 14.0
 
 # All AutoCAD representations of the diameter symbol
 _DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ~T])'
@@ -887,10 +889,102 @@ class LongitudinalRebarFromDwg:
                 f"T{rd.shape_type} (POS={rd.pos or '-'})"
             )
 
+    def _used_diameters(self) -> list[int]:
+        """Return the sorted list of unique rebar diameters actually used."""
+        return sorted({int(rd.diameter) for rd in self.rebars if rd.diameter})
+
+    @staticmethod
+    def _longitudinal_table_headers(dias: list[int]) -> tuple[list[str], int]:
+        """Build table headers: fixed columns + one column per used diameter."""
+        fixed = ["Row", "POS", "Description", "Shape", "Count", "Len(cm)", "Bend(cm)", "UnitW"]
+        headers = fixed + [f"T{d}" for d in dias]
+        return headers, len(fixed)
+
+    @staticmethod
+    def _diameter_summary_maps(
+        summary: list[dict[str, Any]],
+    ) -> tuple[dict[int, float], dict[int, float], float]:
+        """Split ``summary_by_size()`` rows into per-diameter maps + grand total."""
+        length_map: dict[int, float] = {}
+        weight_map: dict[int, float] = {}
+        grand_weight = 0.0
+        for row in summary:
+            size = row.get('Size (mm)')
+            if size == 'TOTAL':
+                grand_weight = float(row.get('Total Weight (kg)') or 0.0)
+                continue
+            if not isinstance(size, (int, float)):
+                continue
+            dia = int(size)
+            length_map[dia] = float(row.get('Total Length (m)') or 0.0)
+            weight_map[dia] = float(row.get('Total Weight (kg)') or 0.0)
+        return length_map, weight_map, grand_weight
+
+    def _draw_longitudinal_summary(
+        self,
+        dias: list[int],
+        x0: float,
+        y: float,
+        col_widths: list[float],
+        cell_h: float,
+        text_h: float,
+        fixed_col_count: int,
+    ) -> None:
+        """Draw the per-size TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL block."""
+        if not dias:
+            return
+        length_map, weight_map, grand_weight = self._diameter_summary_maps(
+            self.summary_by_size()
+        )
+        label_width = sum(col_widths[:fixed_col_count])
+        dia_widths = col_widths[fixed_col_count:]
+
+        def draw_label_row(label: str, dia_values: list[str]) -> None:
+            nonlocal y
+            self._draw_cell(x0, y, label_width, cell_h)
+            self._add_text_center(label, x0 + label_width * 0.5, y - cell_h * 0.5, text_h)
+            x = x0 + label_width
+            for width, value in zip(dia_widths, dia_values):
+                self._draw_cell(x, y, width, cell_h)
+                self._add_text_center(value, x + width * 0.5, y - cell_h * 0.5, text_h)
+                x += width
+            y -= cell_h
+
+        draw_label_row(
+            "TOTAL LENGTH (m)", [f"{length_map.get(d, 0.0):.2f}" for d in dias]
+        )
+        draw_label_row(
+            "TOTAL WEIGHT (Kg)", [f"{weight_map.get(d, 0.0):.2f}" for d in dias]
+        )
+        draw_label_row(
+            "PERCENTAGE (%)",
+            [
+                f"{(weight_map.get(d, 0.0) / grand_weight * 100.0):.0f}%"
+                if grand_weight else "0%"
+                for d in dias
+            ],
+        )
+
+        # Grand total: merged label cell + merged value cell spanning all sizes
+        self._draw_cell(x0, y, label_width, cell_h)
+        self._add_text_center(
+            "GRAND TOTAL (Kg)", x0 + label_width * 0.5, y - cell_h * 0.5, text_h
+        )
+        dia_total_width = sum(dia_widths)
+        self._draw_cell(x0 + label_width, y, dia_total_width, cell_h)
+        self._add_text_center(
+            f"{grand_weight:.2f} Kg.",
+            x0 + label_width + dia_total_width * 0.5,
+            y - cell_h * 0.5,
+            text_h,
+        )
+
     def draw_rebar_shapes(
         self,
         insert_point: tuple[float, float] = (0.0, 0.0),
         scale: float = 1.0,
+        col_widths: list[float] | None = None,
+        dia_col_width: float = DEFAULT_LONGITUDINAL_TABLE_DIA_COL_WIDTH,
     ) -> int:
         """Draw listofer table and fill shape column via template blocks."""
         if not self.rebars:
@@ -903,17 +997,18 @@ class LongitudinalRebarFromDwg:
         cell_h = 8.0 * scale
         text_h = max(2.2 * scale, 0.8)
 
-        headers = [
-            "Row", "POS", "Description", "Shape", "Dia", "Count",
-            "Len(cm)", "Bend(cm)", "UnitW", "TotalW",
+        dias = self._used_diameters()
+        headers, fixed_col_count = self._longitudinal_table_headers(dias)
+
+        width_base = col_widths or DEFAULT_LONGITUDINAL_TABLE_COL_WIDTHS
+        scaled_col_widths = [w * scale for w in width_base] + [
+            dia_col_width * scale for _ in dias
         ]
-        col_widths = [10, 12, 34, 20, 10, 12, 14, 14, 14, 14]
-        col_widths = [w * scale for w in col_widths]
 
         # Header row
         y = y0
         x = x0
-        for w, htxt in zip(col_widths, headers):
+        for w, htxt in zip(scaled_col_widths, headers):
             self._draw_cell(x, y, w, cell_h)
             self._add_text_center(htxt, x + w * 0.5, y - cell_h * 0.5, text_h)
             x += w
@@ -921,8 +1016,6 @@ class LongitudinalRebarFromDwg:
 
         # Data rows
         row_count = 0
-        sum_weight = 0.0
-        sum_length_m = 0.0
         for i, rd in enumerate(self.rebars, 1):
             x = x0
             desc = ""
@@ -931,25 +1024,23 @@ class LongitudinalRebarFromDwg:
 
             unit_w = rd.unit_weight()
             total_w = rd.weight_kg()
-            if rd.length is not None and rd.count is not None:
-                sum_length_m += (rd.length * rd.count) / 100.0
-            if total_w is not None:
-                sum_weight += total_w
 
             values = [
                 str(i),
                 rd.pos or "",
                 desc,
                 "",  # shape cell drawn graphically
-                str(rd.diameter or ""),
                 str(rd.count or ""),
                 str(int(round(rd.length))) if rd.length is not None else "",
                 f"{rd.bend_length:.1f}" if rd.shape_type != "I" else "0",
                 f"{unit_w:.3f}" if unit_w is not None else "",
-                f"{total_w:.2f}" if total_w is not None else "",
             ]
+            for dia in dias:
+                values.append(
+                    f"{total_w:.2f}" if rd.diameter == dia and total_w is not None else ""
+                )
 
-            for col_idx, (w, value) in enumerate(zip(col_widths, values)):
+            for col_idx, (w, value) in enumerate(zip(scaled_col_widths, values)):
                 self._draw_cell(x, y, w, cell_h)
                 if col_idx == 3:
                     self._draw_shape_in_cell(rd, x, y, w, cell_h, text_h)
@@ -960,17 +1051,10 @@ class LongitudinalRebarFromDwg:
             row_count += 1
             y -= cell_h
 
-        # Total row
-        x = x0
-        total_values = [
-            "", "", "TOTAL", "", "", "",
-            f"{sum_length_m:.2f}", "", "", f"{sum_weight:.2f}",
-        ]
-        for col_idx, (w, value) in enumerate(zip(col_widths, total_values)):
-            self._draw_cell(x, y, w, cell_h)
-            if col_idx != 3:
-                self._add_text_center(value, x + w * 0.5, y - cell_h * 0.5, text_h)
-            x += w
+        # Summary block: TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL
+        self._draw_longitudinal_summary(
+            dias, x0, y, scaled_col_widths, cell_h, text_h, fixed_col_count,
+        )
 
         print(f"Drew listofer table with {row_count} row(s) on layer '{self.layer}'.")
         return row_count

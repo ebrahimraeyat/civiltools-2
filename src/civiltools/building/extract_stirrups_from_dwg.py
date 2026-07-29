@@ -59,9 +59,10 @@ STANDARD_BAR_LENGTH_M = 12.0    # standard rebar stock length
 DEFAULT_LISTOFER_TEMPLATE = (
     Path(__file__).resolve().parents[1] / "dxf" / "templates" / "listofer_template.dxf"
 )
-DEFAULT_STIRRUP_TABLE_COL_WIDTHS = [10, 12, 25, 18, 12, 10, 10, 14, 8, 8, 8, 14, 12, 14, 12]
+DEFAULT_STIRRUP_TABLE_COL_WIDTHS = [10, 12, 25, 18, 12, 10, 14, 8, 8, 8, 14, 12, 14]
+DEFAULT_STIRRUP_TABLE_DIA_COL_WIDTH = 12.0
 DEFAULT_STIRRUP_TABLE_CELL_H = 8.0
-DEFAULT_STIRRUP_TABLE_TEXT_H = 2.2
+DEFAULT_STIRRUP_TABLE_TEXT_H = .2
 DEFAULT_STIRRUP_TABLE_MIN_TEXT_H = 0.2
 DEFAULT_STIRRUP_TABLE_TEXT_FACTOR = 0.35
 
@@ -1286,12 +1287,245 @@ class StirrupTableDrawer:
         except Exception:
             pass
 
+    @staticmethod
+    def _used_diameters(zones: list[StirrupZone]) -> list[int]:
+        """Return the sorted list of unique rebar diameters actually used."""
+        return sorted({int(z.diameter) for z in zones if z.diameter and z.total_length > 0})
+
+    @staticmethod
+    def _stirrup_table_headers(dias: list[int]) -> tuple[list[str], int]:
+        """Build table headers: fixed columns + one column per used diameter."""
+        fixed = [
+            "Row", "POS", "Description", "Shape", "Zone", "Spc",
+            "ZoneLen", "Cnt", "B", "H", "SingleL", "TotalL", "UnitW",
+        ]
+        headers = fixed + [f"T{d}" for d in dias]
+        return headers, len(fixed)
+
+    @staticmethod
+    def _stirrup_row_values(
+        i: int,
+        zone: StirrupZone,
+        dias: list[int],
+        zone_type_map: dict[str, str],
+    ) -> list[str]:
+        """Build one data row's cell values, placing the weight in its size column."""
+        values = [
+            str(i),
+            f"S{zone.pos:02d}",
+            zone.description,
+            "",
+            zone_type_map.get(zone.zone_type, zone.zone_type),
+            str(int(zone.spacing)) if zone.spacing else "",
+            str(int(zone.zone_length)) if zone.zone_length else "",
+            str(zone.count),
+            str(int(zone.beam.width)) if zone.beam else "",
+            str(int(zone.beam.height)) if zone.beam else "",
+            f"{zone.single_length:.2f}",
+            f"{zone.total_length:.2f}",
+            f"{zone.unit_weight:.3f}",
+        ]
+        zone_dia = int(zone.diameter) if zone.diameter else None
+        for dia in dias:
+            values.append(f"{zone.total_weight:.2f}" if zone_dia == dia else "")
+        return values
+
+    @staticmethod
+    def _diameter_summary_maps(
+        summary: list[dict[str, Any]],
+    ) -> tuple[dict[int, float], dict[int, float], float]:
+        """Split ``summary_by_size()`` rows into per-diameter maps + grand total."""
+        length_map: dict[int, float] = {}
+        weight_map: dict[int, float] = {}
+        grand_weight = 0.0
+        for row in summary:
+            size = row.get('Size (mm)')
+            if size == 'TOTAL':
+                grand_weight = float(row.get('Total Weight (kg)') or 0.0)
+                continue
+            if not isinstance(size, (int, float)):
+                continue
+            dia = int(size)
+            length_map[dia] = float(row.get('Total Length (m)') or 0.0)
+            weight_map[dia] = float(row.get('Total Weight (kg)') or 0.0)
+        return length_map, weight_map, grand_weight
+
+    def _draw_cell_acad(self, x: float, y_top: float, width: float, height: float) -> None:
+        """Draw one rectangular table cell directly in AutoCAD."""
+        pts = [
+            x, y_top,
+            x + width, y_top,
+            x + width, y_top - height,
+            x, y_top - height,
+            x, y_top,
+        ]
+        self.msp.AddLightWeightPolyline(
+            win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, pts)
+        )
+
+    def _add_text_center_acad(
+        self,
+        text: str,
+        x: float,
+        y: float,
+        text_h: float,
+        color: int | None = None,
+    ) -> None:
+        """Add centered text directly in AutoCAD."""
+        if not text:
+            return
+        text_obj = self.msp.AddText(
+            str(text),
+            win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (x, y, 0)),
+            text_h,
+        )
+        try:
+            text_obj.Alignment = 1  # acAlignmentCenter
+            text_obj.TextAlignmentPoint = win32com.client.VARIANT(
+                pythoncom.VT_ARRAY | pythoncom.VT_R8, (x, y, 0)
+            )
+        except Exception:
+            pass
+        if color:
+            try:
+                text_obj.Color = color
+            except Exception:
+                pass
+        try:
+            text_obj.Layer = self.doc.ActiveLayer.Name
+        except Exception:
+            pass
+
+    def _draw_stirrup_summary_acad(
+        self,
+        extractor: StirrupFromDwg,
+        dias: list[int],
+        x0: float,
+        y: float,
+        col_widths: list[float],
+        cell_h: float,
+        text_h: float,
+        fixed_col_count: int,
+    ) -> None:
+        """Draw the per-size TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL block."""
+        if not dias:
+            return
+        length_map, weight_map, grand_weight = self._diameter_summary_maps(
+            extractor.summary_by_size()
+        )
+        label_width = sum(col_widths[:fixed_col_count])
+        dia_widths = col_widths[fixed_col_count:]
+
+        def draw_label_row(label: str, dia_values: list[str]) -> None:
+            nonlocal y
+            self._draw_cell_acad(x0, y, label_width, cell_h)
+            self._add_text_center_acad(label, x0 + label_width * 0.5, y - cell_h * 0.5, text_h)
+            x = x0 + label_width
+            for width, value in zip(dia_widths, dia_values):
+                self._draw_cell_acad(x, y, width, cell_h)
+                self._add_text_center_acad(value, x + width * 0.5, y - cell_h * 0.5, text_h)
+                x += width
+            y -= cell_h
+
+        draw_label_row(
+            "TOTAL LENGTH (m)", [f"{length_map.get(d, 0.0):.2f}" for d in dias]
+        )
+        draw_label_row(
+            "TOTAL WEIGHT (Kg)", [f"{weight_map.get(d, 0.0):.2f}" for d in dias]
+        )
+        draw_label_row(
+            "PERCENTAGE (%)",
+            [
+                f"{(weight_map.get(d, 0.0) / grand_weight * 100.0):.0f}%"
+                if grand_weight else "0%"
+                for d in dias
+            ],
+        )
+
+        # Grand total: merged label cell + merged value cell spanning all sizes
+        self._draw_cell_acad(x0, y, label_width, cell_h)
+        self._add_text_center_acad(
+            "GRAND TOTAL (Kg)", x0 + label_width * 0.5, y - cell_h * 0.5, text_h
+        )
+        dia_total_width = sum(dia_widths)
+        self._draw_cell_acad(x0 + label_width, y, dia_total_width, cell_h)
+        self._add_text_center_acad(
+            f"{grand_weight:.2f} Kg.",
+            x0 + label_width + dia_total_width * 0.5,
+            y - cell_h * 0.5,
+            text_h,
+        )
+
+    def _draw_stirrup_summary_dxf(
+        self,
+        msp: Any,
+        extractor: StirrupFromDwg,
+        dias: list[int],
+        x0: float,
+        y: float,
+        col_widths: list[float],
+        cell_h: float,
+        text_h: float,
+        fixed_col_count: int,
+    ) -> None:
+        """DXF equivalent of :meth:`_draw_stirrup_summary_acad`."""
+        if not dias:
+            return
+        length_map, weight_map, grand_weight = self._diameter_summary_maps(
+            extractor.summary_by_size()
+        )
+        label_width = sum(col_widths[:fixed_col_count])
+        dia_widths = col_widths[fixed_col_count:]
+
+        def draw_label_row(label: str, dia_values: list[str]) -> None:
+            nonlocal y
+            self._draw_cell_dxf(msp, x0, y, label_width, cell_h)
+            self._add_text_center_dxf(
+                msp, label, x0 + label_width * 0.5, y - cell_h * 0.5, text_h
+            )
+            x = x0 + label_width
+            for width, value in zip(dia_widths, dia_values):
+                self._draw_cell_dxf(msp, x, y, width, cell_h)
+                self._add_text_center_dxf(msp, value, x + width * 0.5, y - cell_h * 0.5, text_h)
+                x += width
+            y -= cell_h
+
+        draw_label_row(
+            "TOTAL LENGTH (m)", [f"{length_map.get(d, 0.0):.2f}" for d in dias]
+        )
+        draw_label_row(
+            "TOTAL WEIGHT (Kg)", [f"{weight_map.get(d, 0.0):.2f}" for d in dias]
+        )
+        draw_label_row(
+            "PERCENTAGE (%)",
+            [
+                f"{(weight_map.get(d, 0.0) / grand_weight * 100.0):.0f}%"
+                if grand_weight else "0%"
+                for d in dias
+            ],
+        )
+
+        self._draw_cell_dxf(msp, x0, y, label_width, cell_h)
+        self._add_text_center_dxf(
+            msp, "GRAND TOTAL (Kg)", x0 + label_width * 0.5, y - cell_h * 0.5, text_h
+        )
+        dia_total_width = sum(dia_widths)
+        self._draw_cell_dxf(msp, x0 + label_width, y, dia_total_width, cell_h)
+        self._add_text_center_dxf(
+            msp,
+            f"{grand_weight:.2f} Kg.",
+            x0 + label_width + dia_total_width * 0.5,
+            y - cell_h * 0.5,
+            text_h,
+        )
+
     def draw_table_to_dxf(
         self,
         extractor: StirrupFromDwg,
         insert_point: tuple[float, float] = (0.0, 0.0),
         scale: float = 1.0,
         col_widths: list[float] | None = None,
+        dia_col_width: float = DEFAULT_STIRRUP_TABLE_DIA_COL_WIDTH,
         cell_height: float = DEFAULT_STIRRUP_TABLE_CELL_H,
         text_height: float = DEFAULT_STIRRUP_TABLE_TEXT_H,
         min_text_height: float = DEFAULT_STIRRUP_TABLE_MIN_TEXT_H,
@@ -1331,19 +1565,18 @@ class StirrupTableDrawer:
         msp = dxf_doc.modelspace()
         x0, y0 = insert_point
         zones = extractor.stirrup_zones
-        summary = extractor.summary_by_size()
         cover_cm = extractor.cover
         hook_factor = extractor.hook_factor
 
+        dias = self._used_diameters(zones)
+        headers, fixed_col_count = self._stirrup_table_headers(dias)
+
         cell_h = cell_height * scale
         width_base = col_widths or DEFAULT_STIRRUP_TABLE_COL_WIDTHS
-        scaled_col_widths = [w * scale for w in width_base]
-        text_h = max(text_height * scale, min_text_height)
-
-        headers = [
-            "Row", "POS", "Description", "Shape", "Zone", "Dia", "Spc",
-            "ZoneLen", "Cnt", "B", "H", "SingleL", "TotalL", "UnitW", "TotalW",
+        scaled_col_widths = [w * scale for w in width_base] + [
+            dia_col_width * scale for _ in dias
         ]
+        text_h = max(text_height * scale, min_text_height)
 
         y = y0
         x = x0
@@ -1355,23 +1588,7 @@ class StirrupTableDrawer:
 
         zone_type_map = {"start": "S", "mid": "M", "end": "E"}
         for i, zone in enumerate(zones, 1):
-            values = [
-                str(i),
-                f"S{zone.pos:02d}",
-                zone.description,
-                "",
-                zone_type_map.get(zone.zone_type, zone.zone_type),
-                str(int(zone.diameter)) if zone.diameter else "",
-                str(int(zone.spacing)) if zone.spacing else "",
-                str(int(zone.zone_length)) if zone.zone_length else "",
-                str(zone.count),
-                str(int(zone.beam.width)) if zone.beam else "",
-                str(int(zone.beam.height)) if zone.beam else "",
-                f"{zone.single_length:.2f}",
-                f"{zone.total_length:.2f}",
-                f"{zone.unit_weight:.3f}",
-                f"{zone.total_weight:.2f}",
-            ]
+            values = self._stirrup_row_values(i, zone, dias, zone_type_map)
 
             x = x0
             for col_idx, (width, value) in enumerate(zip(scaled_col_widths, values)):
@@ -1398,21 +1615,9 @@ class StirrupTableDrawer:
                 x += width
             y -= cell_h
 
-        if summary:
-            total = summary[-1]
-            total_values = [
-                "", "", "TOTAL", "", "", "", "", "", "", "",
-                str(total.get("Number (12 m bars)", "")),
-                "",
-                str(total.get("Total Length (m)", "")),
-                "",
-                str(total.get("Total Weight (kg)", "")),
-            ]
-            x = x0
-            for width, value in zip(scaled_col_widths, total_values):
-                self._draw_cell_dxf(msp, x, y, width, cell_h)
-                self._add_text_center_dxf(msp, value, x + width * 0.5, y - cell_h * 0.5, text_h)
-                x += width
+        self._draw_stirrup_summary_dxf(
+            msp, extractor, dias, x0, y, scaled_col_widths, cell_h, text_h, fixed_col_count,
+        )
 
         dxf_doc.saveas(str(out_path))
         if open_file and os.name == "nt":
@@ -1430,6 +1635,7 @@ class StirrupTableDrawer:
         insert_point: tuple[float, float] = (0.0, 0.0),
         scale: float = 1.0,
         col_widths: list[float] | None = None,
+        dia_col_width: float = DEFAULT_STIRRUP_TABLE_DIA_COL_WIDTH,
         cell_height: float = DEFAULT_STIRRUP_TABLE_CELL_H,
         text_height: float | None = None,
         text_height_factor: float = DEFAULT_STIRRUP_TABLE_TEXT_FACTOR,
@@ -1437,22 +1643,21 @@ class StirrupTableDrawer:
         """Draw the stirrup schedule table at *insert_point*."""
         x0, y0 = insert_point
         zones = extractor.stirrup_zones
-        summary = extractor.summary_by_size()
         cover_cm = extractor.cover
         hook_factor = extractor.hook_factor
 
+        dias = self._used_diameters(zones)
+        headers, fixed_col_count = self._stirrup_table_headers(dias)
+
         cell_h = cell_height * scale
         width_base = col_widths or DEFAULT_STIRRUP_TABLE_COL_WIDTHS
-        scaled_col_widths = [w * scale for w in width_base]
+        scaled_col_widths = [w * scale for w in width_base] + [
+            dia_col_width * scale for _ in dias
+        ]
         row_text_h = text_height * scale if text_height is not None else max(
             cell_h * text_height_factor,
             DEFAULT_STIRRUP_TABLE_MIN_TEXT_H,
         )
-
-        headers = [
-            "Row", "POS", "Description", "Shape", "Zone", "Dia", "Spc",
-            "ZoneLen", "Cnt", "B", "H", "SingleL", "TotalL", "UnitW", "TotalW",
-        ]
 
         # Header row
         y = y0
@@ -1470,23 +1675,7 @@ class StirrupTableDrawer:
         # Data rows
         zone_type_map = {'start': 'S', 'mid': 'M', 'end': 'E'}
         for i, zone in enumerate(zones, 1):
-            values = [
-                str(i),
-                f"S{zone.pos:02d}",
-                zone.description,
-                "",
-                zone_type_map.get(zone.zone_type, zone.zone_type),
-                str(int(zone.diameter)) if zone.diameter else "",
-                str(int(zone.spacing)) if zone.spacing else "",
-                str(int(zone.zone_length)) if zone.zone_length else "",
-                str(zone.count),
-                str(int(zone.beam.width)) if zone.beam else "",
-                str(int(zone.beam.height)) if zone.beam else "",
-                f"{zone.single_length:.2f}",
-                f"{zone.total_length:.2f}",
-                f"{zone.unit_weight:.3f}",
-                f"{zone.total_weight:.2f}",
-            ]
+            values = self._stirrup_row_values(i, zone, dias, zone_type_map)
             self._draw_row(
                 x0,
                 y,
@@ -1507,26 +1696,10 @@ class StirrupTableDrawer:
             )
             y -= cell_h
 
-        # Summary row
-        if summary:
-            total = summary[-1]
-            sum_values = [
-                "", "", "TOTAL", "", "", "", "", "", "", "",
-                str(total.get('Number (12 m bars)', '')),
-                "",
-                str(total.get('Total Length (m)', '')),
-                "",
-                str(total.get('Total Weight (kg)', '')),
-            ]
-            self._draw_row(
-                x0,
-                y,
-                scaled_col_widths,
-                cell_h,
-                sum_values,
-                fill_color=8,
-                text_height=row_text_h,
-            )
+        # Summary block: TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL
+        self._draw_stirrup_summary_acad(
+            extractor, dias, x0, y, scaled_col_widths, cell_h, row_text_h, fixed_col_count,
+        )
 
     def _draw_row(
         self,
