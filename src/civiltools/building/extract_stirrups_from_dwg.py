@@ -27,7 +27,9 @@ from __future__ import annotations
 import math
 import os
 import re
+import shutil
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +59,11 @@ STANDARD_BAR_LENGTH_M = 12.0    # standard rebar stock length
 DEFAULT_LISTOFER_TEMPLATE = (
     Path(__file__).resolve().parents[1] / "dxf" / "templates" / "listofer_template.dxf"
 )
+DEFAULT_STIRRUP_TABLE_COL_WIDTHS = [10, 12, 25, 18, 12, 10, 10, 14, 8, 8, 8, 14, 12, 14, 12]
+DEFAULT_STIRRUP_TABLE_CELL_H = 8.0
+DEFAULT_STIRRUP_TABLE_TEXT_H = 2.2
+DEFAULT_STIRRUP_TABLE_MIN_TEXT_H = 0.2
+DEFAULT_STIRRUP_TABLE_TEXT_FACTOR = 0.35
 
 # All AutoCAD representations of the diameter symbol
 _DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ~T])'
@@ -1187,11 +1194,245 @@ class StirrupTableDrawer:
             self._stirrup_shape_values(zone, cover_cm, hook_factor),
         )
 
+    @staticmethod
+    def _current_doc_dir(doc: Any) -> Path:
+        """Return directory of active AutoCAD document, fallback to cwd."""
+        try:
+            full_name = str(getattr(doc, "FullName", "") or "").strip()
+            if full_name:
+                return Path(full_name).resolve().parent
+        except Exception:
+            pass
+        return Path.cwd().resolve()
+
+    def _resolve_output_dxf_path(
+        self,
+        output_path: str | Path | None,
+        filename: str | None,
+        prefix: str = "stirrup_listofer",
+    ) -> Path:
+        """Build output DXF path next to current DWG unless explicit path is passed."""
+        if output_path is not None:
+            return Path(output_path).resolve()
+
+        out_dir = self._current_doc_dir(self.doc)
+        if filename:
+            name = filename
+            if not name.lower().endswith(".dxf"):
+                name += ".dxf"
+        else:
+            name = f"{prefix}_{uuid.uuid4().hex[:8]}.dxf"
+        return out_dir / name
+
+    @staticmethod
+    def _draw_cell_dxf(msp: Any, x: float, y_top: float, width: float, height: float) -> None:
+        """Draw one rectangular cell in a DXF modelspace."""
+        pts = [
+            (x, y_top),
+            (x + width, y_top),
+            (x + width, y_top - height),
+            (x, y_top - height),
+            (x, y_top),
+        ]
+        msp.add_lwpolyline(pts)
+
+    @staticmethod
+    def _add_text_center_dxf(
+        msp: Any,
+        text: str,
+        x: float,
+        y: float,
+        text_h: float,
+    ) -> None:
+        """Add centered text in DXF using MIDDLE_CENTER alignment."""
+        if not text:
+            return
+        from ezdxf.enums import TextEntityAlignment
+
+        txt = msp.add_text(str(text), dxfattribs={"height": text_h})
+        txt.set_placement((x, y), align=TextEntityAlignment.MIDDLE_CENTER)
+
+    def _insert_shape_block_dxf(
+        self,
+        msp: Any,
+        zone: StirrupZone,
+        x: float,
+        y_top: float,
+        width: float,
+        height: float,
+        cover_cm: float,
+        hook_factor: float,
+    ) -> None:
+        """Insert TO block with L1/L2/L3 attributes in DXF modelspace."""
+        doc = msp.doc
+        if "TO" not in doc.blocks:
+            return
+
+        values = self._stirrup_shape_values(zone, cover_cm, hook_factor)
+        insert_x = x + width * 0.5
+        insert_y = y_top - height * 0.60
+        bref = msp.add_blockref(
+            "TO",
+            (insert_x, insert_y),
+            dxfattribs={
+                "xscale": self.block_scale,
+                "yscale": self.block_scale,
+                "zscale": self.block_scale,
+                "rotation": 0.0,
+            },
+        )
+        try:
+            bref.add_auto_attribs(values)
+        except Exception:
+            pass
+
+    def draw_table_to_dxf(
+        self,
+        extractor: StirrupFromDwg,
+        insert_point: tuple[float, float] = (0.0, 0.0),
+        scale: float = 1.0,
+        col_widths: list[float] | None = None,
+        cell_height: float = DEFAULT_STIRRUP_TABLE_CELL_H,
+        text_height: float = DEFAULT_STIRRUP_TABLE_TEXT_H,
+        min_text_height: float = DEFAULT_STIRRUP_TABLE_MIN_TEXT_H,
+        output_path: str | Path | None = None,
+        filename: str | None = None,
+        open_file: bool = True,
+    ) -> Path:
+        """Write stirrup listofer into a DXF file (template copy + write + open)."""
+        try:
+            import ezdxf
+        except ImportError as exc:
+            raise ImportError(
+                "ezdxf is required for DXF output. Install: pip install ezdxf"
+            ) from exc
+
+        readfile_fn = getattr(ezdxf, "readfile", None)
+        if readfile_fn is None:
+            from ezdxf import filemanagement as _filemanagement
+
+            readfile_fn = _filemanagement.readfile
+
+        new_fn = getattr(ezdxf, "new", None)
+        if new_fn is None:
+            from ezdxf import filemanagement as _filemanagement
+
+            new_fn = _filemanagement.new
+
+        out_path = self._resolve_output_dxf_path(output_path, filename)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.template_path and self.template_path.exists():
+            shutil.copy2(self.template_path, out_path)
+            dxf_doc = readfile_fn(str(out_path))
+        else:
+            dxf_doc = new_fn("R2010")
+
+        msp = dxf_doc.modelspace()
+        x0, y0 = insert_point
+        zones = extractor.stirrup_zones
+        summary = extractor.summary_by_size()
+        cover_cm = extractor.cover
+        hook_factor = extractor.hook_factor
+
+        cell_h = cell_height * scale
+        width_base = col_widths or DEFAULT_STIRRUP_TABLE_COL_WIDTHS
+        scaled_col_widths = [w * scale for w in width_base]
+        text_h = max(text_height * scale, min_text_height)
+
+        headers = [
+            "Row", "POS", "Description", "Shape", "Zone", "Dia", "Spc",
+            "ZoneLen", "Cnt", "B", "H", "SingleL", "TotalL", "UnitW", "TotalW",
+        ]
+
+        y = y0
+        x = x0
+        for width, title in zip(scaled_col_widths, headers):
+            self._draw_cell_dxf(msp, x, y, width, cell_h)
+            self._add_text_center_dxf(msp, title, x + width * 0.5, y - cell_h * 0.5, text_h)
+            x += width
+        y -= cell_h
+
+        zone_type_map = {"start": "S", "mid": "M", "end": "E"}
+        for i, zone in enumerate(zones, 1):
+            values = [
+                str(i),
+                f"S{zone.pos:02d}",
+                zone.description,
+                "",
+                zone_type_map.get(zone.zone_type, zone.zone_type),
+                str(int(zone.diameter)) if zone.diameter else "",
+                str(int(zone.spacing)) if zone.spacing else "",
+                str(int(zone.zone_length)) if zone.zone_length else "",
+                str(zone.count),
+                str(int(zone.beam.width)) if zone.beam else "",
+                str(int(zone.beam.height)) if zone.beam else "",
+                f"{zone.single_length:.2f}",
+                f"{zone.total_length:.2f}",
+                f"{zone.unit_weight:.3f}",
+                f"{zone.total_weight:.2f}",
+            ]
+
+            x = x0
+            for col_idx, (width, value) in enumerate(zip(scaled_col_widths, values)):
+                self._draw_cell_dxf(msp, x, y, width, cell_h)
+                if col_idx == 3:
+                    self._insert_shape_block_dxf(
+                        msp,
+                        zone,
+                        x,
+                        y,
+                        width,
+                        cell_h,
+                        cover_cm,
+                        hook_factor,
+                    )
+                else:
+                    self._add_text_center_dxf(
+                        msp,
+                        value,
+                        x + width * 0.5,
+                        y - cell_h * 0.5,
+                        text_h,
+                    )
+                x += width
+            y -= cell_h
+
+        if summary:
+            total = summary[-1]
+            total_values = [
+                "", "", "TOTAL", "", "", "", "", "", "", "",
+                str(total.get("Number (12 m bars)", "")),
+                "",
+                str(total.get("Total Length (m)", "")),
+                "",
+                str(total.get("Total Weight (kg)", "")),
+            ]
+            x = x0
+            for width, value in zip(scaled_col_widths, total_values):
+                self._draw_cell_dxf(msp, x, y, width, cell_h)
+                self._add_text_center_dxf(msp, value, x + width * 0.5, y - cell_h * 0.5, text_h)
+                x += width
+
+        dxf_doc.saveas(str(out_path))
+        if open_file and os.name == "nt":
+            try:
+                os.startfile(str(out_path))
+            except OSError:
+                pass
+
+        print(f"DXF listofer saved: {out_path}")
+        return out_path
+
     def draw_table(
         self,
         extractor: StirrupFromDwg,
         insert_point: tuple[float, float] = (0.0, 0.0),
         scale: float = 1.0,
+        col_widths: list[float] | None = None,
+        cell_height: float = DEFAULT_STIRRUP_TABLE_CELL_H,
+        text_height: float | None = None,
+        text_height_factor: float = DEFAULT_STIRRUP_TABLE_TEXT_FACTOR,
     ) -> None:
         """Draw the stirrup schedule table at *insert_point*."""
         x0, y0 = insert_point
@@ -1200,9 +1441,13 @@ class StirrupTableDrawer:
         cover_cm = extractor.cover
         hook_factor = extractor.hook_factor
 
-        cell_h = 8 * scale
-        col_widths = [10, 12, 25, 18, 12, 10, 10, 14, 8, 8, 8, 14, 12, 14, 12]
-        col_widths = [w * scale for w in col_widths]
+        cell_h = cell_height * scale
+        width_base = col_widths or DEFAULT_STIRRUP_TABLE_COL_WIDTHS
+        scaled_col_widths = [w * scale for w in width_base]
+        row_text_h = text_height * scale if text_height is not None else max(
+            cell_h * text_height_factor,
+            DEFAULT_STIRRUP_TABLE_MIN_TEXT_H,
+        )
 
         headers = [
             "Row", "POS", "Description", "Shape", "Zone", "Dia", "Spc",
@@ -1211,7 +1456,15 @@ class StirrupTableDrawer:
 
         # Header row
         y = y0
-        self._draw_row(x0, y, col_widths, cell_h, headers, fill_color=5)
+        self._draw_row(
+            x0,
+            y,
+            scaled_col_widths,
+            cell_h,
+            headers,
+            fill_color=5,
+            text_height=row_text_h,
+        )
         y -= cell_h
 
         # Data rows
@@ -1237,9 +1490,10 @@ class StirrupTableDrawer:
             self._draw_row(
                 x0,
                 y,
-                col_widths,
+                scaled_col_widths,
                 cell_h,
                 values,
+                text_height=row_text_h,
                 shape_col_idx=3,
                 shape_callback=lambda cx, cy, cw, ch, z=zone: self._insert_shape_block(
                     z,
@@ -1264,7 +1518,15 @@ class StirrupTableDrawer:
                 "",
                 str(total.get('Total Weight (kg)', '')),
             ]
-            self._draw_row(x0, y, col_widths, cell_h, sum_values, fill_color=8)
+            self._draw_row(
+                x0,
+                y,
+                scaled_col_widths,
+                cell_h,
+                sum_values,
+                fill_color=8,
+                text_height=row_text_h,
+            )
 
     def _draw_row(
         self,
@@ -1276,6 +1538,7 @@ class StirrupTableDrawer:
         fill_color: int = 0,
         shape_col_idx: int | None = None,
         shape_callback: Any = None,
+        text_height: float | None = None,
     ) -> None:
         """Draw one table row with text centered in each cell."""
         x = x0
@@ -1302,7 +1565,14 @@ class StirrupTableDrawer:
             if value:
                 text_x = x + width / 2
                 text_y = y - height / 2
-                text_height = height * 0.35
+                text_height_row = (
+                    text_height
+                    if text_height is not None
+                    else max(
+                        height * DEFAULT_STIRRUP_TABLE_TEXT_FACTOR,
+                        DEFAULT_STIRRUP_TABLE_MIN_TEXT_H,
+                    )
+                )
 
                 # Create text with Left alignment first (most reliable)
                 text_obj = self.msp.AddText(
@@ -1311,7 +1581,7 @@ class StirrupTableDrawer:
                         pythoncom.VT_ARRAY | pythoncom.VT_R8,
                         (text_x, text_y, 0)
                     ),
-                    text_height,
+                    text_height_row,
                 )
 
                 # Set alignment to MiddleCenter (4 = acAlignmentCenter in some versions)
