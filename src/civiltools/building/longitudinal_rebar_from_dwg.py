@@ -71,6 +71,7 @@ from civiltools.building.listofer_style import (  # noqa: E402
     ROW_COL_WIDTH,
     SHAPE_COL_WIDTH,
     SUMMARY_FILL_COLOR,
+    TEXT_HEIGHT as DEFAULT_LONGITUDINAL_TABLE_TEXT_H,
     TEXT_HEIGHT_FACTOR as DEFAULT_LONGITUDINAL_TABLE_TEXT_FACTOR,
     UNIT_WEIGHT_COL_WIDTH,
     resolve_text_height,
@@ -257,7 +258,8 @@ class LongitudinalRebarFromDwg:
         hook_type: str = '90',
         layer: str = DEFAULT_SHAPE_LAYER,
         template_path: str | Path | None = DEFAULT_LISTOFER_TEMPLATE,
-        block_scale: float = 0.8,
+        # Match stirrup listofer: fixed insert scale (not multiplied by table scale).
+        block_scale: float = 0.08,
     ) -> None:
         if doc is None:
             self.acad: Any = win32com.client.Dispatch("AutoCAD.Application")
@@ -273,6 +275,8 @@ class LongitudinalRebarFromDwg:
         self.template_path = Path(template_path) if template_path else None
         self.block_scale = float(block_scale)
         self._template_blocks_ready = False
+        # Cached template metrics: name -> (width, height, center_x, center_y)
+        self._shape_block_metrics: dict[str, tuple[float, float, float, float]] | None = None
 
         self.blocks: list[Any] = []              # raw COM block references
         self.leaders: list[_LeaderInfo] = []     # cached leader geometry
@@ -441,6 +445,159 @@ class LongitudinalRebarFromDwg:
             except Exception:
                 continue
 
+    def _collect_entity_points(self, entity: Any) -> list[tuple[float, float]]:
+        """Collect 2D points from a template entity for bounding-box metrics."""
+        points: list[tuple[float, float]] = []
+        etype = entity.dxftype()
+        try:
+            get_points = getattr(entity, "get_points", None)
+            if get_points is not None:
+                points.extend((float(pt[0]), float(pt[1])) for pt in get_points("xy"))
+                return points
+        except Exception:
+            pass
+
+        try:
+            if etype == "LINE":
+                points.extend(
+                    [
+                        (float(entity.dxf.start.x), float(entity.dxf.start.y)),
+                        (float(entity.dxf.end.x), float(entity.dxf.end.y)),
+                    ]
+                )
+            elif etype in {"CIRCLE", "ARC"}:
+                center = entity.dxf.center
+                radius = float(entity.dxf.radius)
+                points.extend(
+                    [
+                        (float(center.x) - radius, float(center.y) - radius),
+                        (float(center.x) + radius, float(center.y) + radius),
+                    ]
+                )
+            elif etype in {"TEXT", "ATTDEF", "MTEXT", "INSERT"}:
+                insert = entity.dxf.insert
+                points.append((float(insert.x), float(insert.y)))
+                # Pad attribute/text extents so length labels keep a visual margin.
+                height = float(getattr(entity.dxf, "height", 0.0) or 0.0)
+                if height > 0.0:
+                    # ~half-width of a short numeric label around the insert point.
+                    pad_x = height * 1.6
+                    pad_y = height * 0.6
+                    points.extend(
+                        [
+                            (float(insert.x) - pad_x, float(insert.y) - pad_y),
+                            (float(insert.x) + pad_x, float(insert.y) + pad_y),
+                        ]
+                    )
+        except Exception:
+            return points
+        return points
+
+    def _load_shape_block_metrics(self) -> dict[str, tuple[float, float, float, float]]:
+        """Return template block size/center metrics for TI/TL/TU."""
+        metrics: dict[str, tuple[float, float, float, float]] = {}
+        if not self.template_path or not self.template_path.exists():
+            return metrics
+        try:
+            ezdxf = self._get_ezdxf()
+            readfile_fn = getattr(ezdxf, "readfile", None)
+            if readfile_fn is None:
+                from ezdxf import filemanagement as _filemanagement
+
+                readfile_fn = _filemanagement.readfile
+            template = readfile_fn(str(self.template_path))
+        except Exception:
+            return metrics
+
+        for name in ("TI", "TL", "TU"):
+            if name not in template.blocks:
+                continue
+            points: list[tuple[float, float]] = []
+            for entity in template.blocks[name]:
+                points.extend(self._collect_entity_points(entity))
+            if not points:
+                continue
+            xs = [pt[0] for pt in points]
+            ys = [pt[1] for pt in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            width = max_x - min_x
+            height = max_y - min_y
+            if width <= 0.0 or height <= 0.0:
+                continue
+            metrics[name] = (
+                width,
+                height,
+                0.5 * (min_x + max_x),
+                0.5 * (min_y + max_y),
+            )
+        return metrics
+
+    def _shape_block_metrics_for(
+        self, block_name: str
+    ) -> tuple[float, float, float, float] | None:
+        """Lazy-load and return (width, height, center_x, center_y) for a block."""
+        if self._shape_block_metrics is None:
+            self._shape_block_metrics = self._load_shape_block_metrics()
+        return self._shape_block_metrics.get(block_name)
+
+    def _shape_placement_for_cell(
+        self,
+        block_name: str,
+        x: float,
+        y_top: float,
+        width: float,
+        height: float,
+    ) -> tuple[float, float, float]:
+        """Return (insert_x, insert_y, scale) so the shape fits with cell margin."""
+        # Keep a clear margin around geometry + bend labels (L1/L2/L3).
+        margin_x = 0.12
+        margin_y = 0.16
+        usable_w = max(width * (1.0 - 2.0 * margin_x), width * 0.5)
+        usable_h = max(height * (1.0 - 2.0 * margin_y), height * 0.5)
+
+        metrics = self._shape_block_metrics_for(block_name)
+        cell_cx = x + width * 0.5
+        cell_cy = y_top - height * 0.5
+        if metrics is None:
+            # Fallback: fixed scale, slightly above geometric mid like before.
+            return cell_cx, y_top - height * 0.60, self.block_scale
+
+        block_w, block_h, center_x, center_y = metrics
+        fit_scale = min(usable_w / block_w, usable_h / block_h)
+        # Never larger than the configured default; shrink when the cell is tight.
+        block_scale = min(self.block_scale, fit_scale) if self.block_scale > 0 else fit_scale
+        if block_scale <= 0.0:
+            block_scale = fit_scale
+
+        # Shift insert point so the content bbox center lands on the cell center.
+        insert_x = cell_cx - center_x * block_scale
+        insert_y = cell_cy - center_y * block_scale
+        return insert_x, insert_y, block_scale
+
+    @staticmethod
+    def _shape_attr_values(rd: LongitudinalRebarData) -> dict[str, str]:
+        """Build L1/L2/L3 attribute values for a longitudinal shape block."""
+        total_len = float(rd.length or 0.0)
+        bend_len = float(rd.bend_length or 0.0)
+        shape = rd.shape_type.upper()
+        if shape == "L":
+            straight = max(total_len - bend_len, 0.0)
+            return {
+                "L1": str(int(round(straight))),
+                "L2": str(int(round(bend_len))),
+                "L3": str(int(round(bend_len))),
+            }
+        if shape == "U":
+            straight = max(total_len - 2.0 * bend_len, 0.0)
+            return {
+                "L1": str(int(round(straight))),
+                "L2": str(int(round(bend_len))),
+                "L3": str(int(round(bend_len))),
+            }
+        # TI should not modify L2/L3 even if they exist in the block.
+        return {"L1": str(int(round(max(total_len, 0.0))))}
+
     def _insert_template_shape_block(
         self,
         rd: LongitudinalRebarData,
@@ -458,34 +615,10 @@ class LongitudinalRebarFromDwg:
             "U": "TU",
         }
         bname = block_map.get(rd.shape_type.upper(), "TI")
-
-        total_len = float(rd.length or 0.0)
-        bend_len = float(rd.bend_length or 0.0)
-        if rd.shape_type == "L":
-            straight = max(total_len - bend_len, 0.0)
-            attr_values = {
-                "L1": str(int(round(straight))),
-                "L2": str(int(round(bend_len))),
-                "L3": str(int(round(bend_len))),
-            }
-        elif rd.shape_type == "U":
-            straight = max(total_len - 2.0 * bend_len, 0.0)
-            attr_values = {
-                "L1": str(int(round(straight))),
-                "L2": str(int(round(bend_len))),
-                "L3": str(int(round(bend_len))),
-            }
-        else:
-            straight = max(total_len, 0.0)
-            # TI should not modify L2/L3 even if they exist in the block.
-            attr_values = {
-                "L1": str(int(round(straight))),
-            }
-
-        # Place by cell center; template block base-point controls exact location.
-        ins_x = x + width * 0.5
-        ins_y = y_top - height * 0.60
-        block_scale = self.block_scale * scale
+        attr_values = self._shape_attr_values(rd)
+        ins_x, ins_y, block_scale = self._shape_placement_for_cell(
+            bname, x, y_top, width, height
+        )
 
         try:
             bref = self.doc.ModelSpace.InsertBlock(
@@ -583,29 +716,10 @@ class LongitudinalRebarFromDwg:
         if bname not in doc.blocks:
             return False
 
-        total_len = float(rd.length or 0.0)
-        bend_len = float(rd.bend_length or 0.0)
-        if rd.shape_type == "L":
-            straight = max(total_len - bend_len, 0.0)
-            attr_values = {
-                "L1": str(int(round(straight))),
-                "L2": str(int(round(bend_len))),
-                "L3": str(int(round(bend_len))),
-            }
-        elif rd.shape_type == "U":
-            straight = max(total_len - 2.0 * bend_len, 0.0)
-            attr_values = {
-                "L1": str(int(round(straight))),
-                "L2": str(int(round(bend_len))),
-                "L3": str(int(round(bend_len))),
-            }
-        else:
-            straight = max(total_len, 0.0)
-            attr_values = {"L1": str(int(round(straight)))}
-
-        insert_x = x + width * 0.5
-        insert_y = y_top - height * 0.60
-        block_scale = self.block_scale * scale
+        attr_values = self._shape_attr_values(rd)
+        insert_x, insert_y, block_scale = self._shape_placement_for_cell(
+            bname, x, y_top, width, height
+        )
         bref = msp.add_blockref(
             bname,
             (insert_x, insert_y),
@@ -1136,8 +1250,10 @@ class LongitudinalRebarFromDwg:
 
         x0, y0 = insert_point
         cell_h = DEFAULT_LONGITUDINAL_TABLE_CELL_H * scale
+        # Same text model as stirrup listofer: base TEXT_HEIGHT (0.2), floored at min.
         text_h = resolve_text_height(
             scale,
+            text_height=DEFAULT_LONGITUDINAL_TABLE_TEXT_H,
             text_height_factor=DEFAULT_LONGITUDINAL_TABLE_TEXT_FACTOR,
             cell_height=DEFAULT_LONGITUDINAL_TABLE_CELL_H,
             min_text_height=DEFAULT_LONGITUDINAL_TABLE_MIN_TEXT_H,
@@ -1276,7 +1392,7 @@ class LongitudinalRebarFromDwg:
         col_widths: list[float] | None = None,
         dia_col_width: float = DEFAULT_LONGITUDINAL_TABLE_DIA_COL_WIDTH,
         cell_height: float = DEFAULT_LONGITUDINAL_TABLE_CELL_H,
-        text_height: float | None = None,
+        text_height: float = DEFAULT_LONGITUDINAL_TABLE_TEXT_H,
         min_text_height: float = DEFAULT_LONGITUDINAL_TABLE_MIN_TEXT_H,
         output_path: str | Path | None = None,
         filename: str | None = None,
@@ -1325,6 +1441,7 @@ class LongitudinalRebarFromDwg:
         scaled_col_widths = [w * scale for w in width_base] + [
             dia_col_width * scale for _ in dias
         ]
+        # Same as stirrup DXF path: pass explicit base text height (default 0.2).
         text_h = resolve_text_height(
             scale,
             text_height,
