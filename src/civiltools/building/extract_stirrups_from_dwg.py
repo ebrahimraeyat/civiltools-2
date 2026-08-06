@@ -62,6 +62,7 @@ from civiltools.building.listofer_style import (  # noqa: E402
     TEXT_HEIGHT as DEFAULT_STIRRUP_TABLE_TEXT_H,
     TEXT_HEIGHT_FACTOR as DEFAULT_STIRRUP_TABLE_TEXT_FACTOR,
     UNIT_WEIGHT_COL_WIDTH,
+    VIEW_TABLE_GAP_CELLS,
     resolve_text_height,
 )
 from civiltools.building.rebar_from_dwg import calculate_length_with_hooks  # noqa: E402
@@ -818,14 +819,21 @@ class StirrupFromDwg:
             'end_zones': sum(1 for z in self.stirrup_zones if z.zone_type == 'end'),
         }
 
-    def summary_by_size(self) -> list[dict[str, Any]]:
+    def summary_by_size(
+        self,
+        zones: list[StirrupZone] | None = None,
+    ) -> list[dict[str, Any]]:
         """Group complete stirrups by diameter and return summary rows.
 
         Each row: size (mm), total_length (m), number (ceil of
         total_length / 12 m), weight (kg), unit_weight (kg/m).
+
+        If *zones* is given, summarize that list (e.g. a grouped view);
+        otherwise use ``self.stirrup_zones``.
         """
+        source = self.stirrup_zones if zones is None else zones
         groups: dict[float, float] = defaultdict(float)
-        for zone in self.stirrup_zones:
+        for zone in source:
             if zone.diameter <= 0 or zone.total_length <= 0:
                 continue
             groups[zone.diameter] += zone.total_length
@@ -1422,12 +1430,16 @@ class StirrupTableDrawer:
         cell_h: float,
         text_h: float,
         fixed_col_count: int,
-    ) -> None:
-        """Draw the per-size TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL block."""
+        zones: list[StirrupZone] | None = None,
+    ) -> float:
+        """Draw the per-size TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL block.
+
+        Returns the Y coordinate after the summary block (bottom of last row).
+        """
         if not dias:
-            return
+            return y
         length_map, weight_map, grand_weight = self._diameter_summary_maps(
-            extractor.summary_by_size()
+            extractor.summary_by_size(zones)
         )
         label_width = sum(col_widths[:fixed_col_count])
         dia_widths = col_widths[fixed_col_count:]
@@ -1478,6 +1490,7 @@ class StirrupTableDrawer:
             y - cell_h * 0.5,
             text_h,
         )
+        return y - cell_h
 
     def _draw_stirrup_summary_dxf(
         self,
@@ -1490,12 +1503,16 @@ class StirrupTableDrawer:
         cell_h: float,
         text_h: float,
         fixed_col_count: int,
-    ) -> None:
-        """DXF equivalent of :meth:`_draw_stirrup_summary_acad`."""
+        zones: list[StirrupZone] | None = None,
+    ) -> float:
+        """DXF equivalent of :meth:`_draw_stirrup_summary_acad`.
+
+        Returns the Y coordinate after the summary block (bottom of last row).
+        """
         if not dias:
-            return
+            return y
         length_map, weight_map, grand_weight = self._diameter_summary_maps(
-            extractor.summary_by_size()
+            extractor.summary_by_size(zones)
         )
         label_width = sum(col_widths[:fixed_col_count])
         dia_widths = col_widths[fixed_col_count:]
@@ -1541,6 +1558,151 @@ class StirrupTableDrawer:
             y - cell_h * 0.5,
             text_h,
         )
+        return y - cell_h
+
+    @staticmethod
+    def _stirrup_view_rows(
+        zones: list[StirrupZone],
+        view_mode: str | None,
+    ) -> list[tuple[str, list[StirrupZone]]]:
+        """Expand *view_mode* into one or two ``(label, zones)`` table views."""
+        from civiltools.building.listofer_grouping import (
+            DEFAULT_LISTOFER_VIEW_MODE,
+            group_stirrup_zones,
+            iter_listofer_views,
+        )
+
+        return iter_listofer_views(
+            zones,
+            group_stirrup_zones,
+            view_mode if view_mode is not None else DEFAULT_LISTOFER_VIEW_MODE,
+        )
+
+    def _draw_one_stirrup_table_dxf(
+        self,
+        msp: Any,
+        extractor: StirrupFromDwg,
+        zones: list[StirrupZone],
+        x0: float,
+        y0: float,
+        scaled_col_widths: list[float],
+        cell_h: float,
+        text_h: float,
+        dias: list[int],
+        fixed_col_count: int,
+        cover_cm: float,
+        hook_type: str,
+        title: str | None = None,
+    ) -> float:
+        """Draw one stirrup table (header + rows + summary) in DXF; return bottom Y."""
+        y = y0
+        if title:
+            self._add_text_center_dxf(
+                msp, title, x0 + sum(scaled_col_widths) * 0.5, y - cell_h * 0.5, text_h
+            )
+            y -= cell_h
+
+        headers, _ = self._stirrup_table_headers(dias)
+        x = x0
+        for width, header in zip(scaled_col_widths, headers):
+            self._draw_cell_dxf(msp, x, y, width, cell_h)
+            self._add_text_center_dxf(msp, header, x + width * 0.5, y - cell_h * 0.5, text_h)
+            x += width
+        y -= cell_h
+
+        zone_type_map = {"start": "S", "mid": "M", "end": "E"}
+        for i, zone in enumerate(zones, 1):
+            values = self._stirrup_row_values(i, zone, dias, zone_type_map)
+            x = x0
+            for col_idx, (width, value) in enumerate(zip(scaled_col_widths, values)):
+                self._draw_cell_dxf(msp, x, y, width, cell_h)
+                if col_idx == 3:
+                    self._insert_shape_block_dxf(
+                        msp, zone, x, y, width, cell_h, cover_cm, hook_type,
+                    )
+                else:
+                    self._add_text_center_dxf(
+                        msp, value, x + width * 0.5, y - cell_h * 0.5, text_h,
+                    )
+                x += width
+            y -= cell_h
+
+        return self._draw_stirrup_summary_dxf(
+            msp,
+            extractor,
+            dias,
+            x0,
+            y,
+            scaled_col_widths,
+            cell_h,
+            text_h,
+            fixed_col_count,
+            zones=zones,
+        )
+
+    def _draw_one_stirrup_table_acad(
+        self,
+        extractor: StirrupFromDwg,
+        zones: list[StirrupZone],
+        x0: float,
+        y0: float,
+        scaled_col_widths: list[float],
+        cell_h: float,
+        text_h: float,
+        dias: list[int],
+        fixed_col_count: int,
+        cover_cm: float,
+        hook_type: str,
+        title: str | None = None,
+    ) -> float:
+        """Draw one stirrup table in AutoCAD; return bottom Y."""
+        y = y0
+        if title:
+            self._add_text_center_acad(
+                title, x0 + sum(scaled_col_widths) * 0.5, y - cell_h * 0.5, text_h,
+            )
+            y -= cell_h
+
+        headers, _ = self._stirrup_table_headers(dias)
+        self._draw_row(
+            x0,
+            y,
+            scaled_col_widths,
+            cell_h,
+            headers,
+            fill_color=HEADER_FILL_COLOR,
+            text_height=text_h,
+        )
+        y -= cell_h
+
+        zone_type_map = {"start": "S", "mid": "M", "end": "E"}
+        for i, zone in enumerate(zones, 1):
+            values = self._stirrup_row_values(i, zone, dias, zone_type_map)
+            self._draw_row(
+                x0,
+                y,
+                scaled_col_widths,
+                cell_h,
+                values,
+                text_height=text_h,
+                shape_col_idx=3,
+                shape_callback=lambda cx, cy, cw, ch, z=zone: self._insert_shape_block(
+                    z, cx, cy, cw, ch, cover_cm, hook_type,
+                ),
+            )
+            y -= cell_h
+
+        return self._draw_stirrup_summary_acad(
+            extractor,
+            dias,
+            x0,
+            y,
+            scaled_col_widths,
+            cell_h,
+            text_h,
+            fixed_col_count,
+            zones=zones,
+        )
 
     def draw_table_to_dxf(
         self,
@@ -1555,8 +1717,13 @@ class StirrupTableDrawer:
         output_path: str | Path | None = None,
         filename: str | None = None,
         open_file: bool = True,
+        view_mode: str | None = None,
     ) -> Path:
-        """Write stirrup listofer into a DXF file (template copy + write + open)."""
+        """Write stirrup listofer into a DXF file (template copy + write + open).
+
+        *view_mode*: ``\"detailed\"`` | ``\"grouped\"`` | ``\"both\"`` (default both).
+        When ``both``, draws the full table then a grouped table below it.
+        """
         try:
             import ezdxf
         except ImportError as exc:
@@ -1587,12 +1754,14 @@ class StirrupTableDrawer:
 
         msp = dxf_doc.modelspace()
         x0, y0 = insert_point
-        zones = extractor.stirrup_zones
+        all_zones = extractor.stirrup_zones
         cover_cm = extractor.cover
         hook_type = extractor.hook_type
 
-        dias = self._used_diameters(zones)
-        headers, fixed_col_count = self._stirrup_table_headers(dias)
+        views = self._stirrup_view_rows(all_zones, view_mode)
+        # Diameter columns cover every bar so detailed/grouped share the same grid.
+        dias = self._used_diameters(all_zones)
+        _, fixed_col_count = self._stirrup_table_headers(dias)
 
         cell_h = cell_height * scale
         width_base = col_widths or DEFAULT_STIRRUP_TABLE_COL_WIDTHS
@@ -1600,47 +1769,29 @@ class StirrupTableDrawer:
             dia_col_width * scale for _ in dias
         ]
         text_h = resolve_text_height(scale, text_height, min_text_height=min_text_height)
+        gap = cell_h * VIEW_TABLE_GAP_CELLS
+        show_titles = len(views) > 1
 
         y = y0
-        x = x0
-        for width, title in zip(scaled_col_widths, headers):
-            self._draw_cell_dxf(msp, x, y, width, cell_h)
-            self._add_text_center_dxf(msp, title, x + width * 0.5, y - cell_h * 0.5, text_h)
-            x += width
-        y -= cell_h
-
-        zone_type_map = {"start": "S", "mid": "M", "end": "E"}
-        for i, zone in enumerate(zones, 1):
-            values = self._stirrup_row_values(i, zone, dias, zone_type_map)
-
-            x = x0
-            for col_idx, (width, value) in enumerate(zip(scaled_col_widths, values)):
-                self._draw_cell_dxf(msp, x, y, width, cell_h)
-                if col_idx == 3:
-                    self._insert_shape_block_dxf(
-                        msp,
-                        zone,
-                        x,
-                        y,
-                        width,
-                        cell_h,
-                        cover_cm,
-                        hook_type,
-                    )
-                else:
-                    self._add_text_center_dxf(
-                        msp,
-                        value,
-                        x + width * 0.5,
-                        y - cell_h * 0.5,
-                        text_h,
-                    )
-                x += width
-            y -= cell_h
-
-        self._draw_stirrup_summary_dxf(
-            msp, extractor, dias, x0, y, scaled_col_widths, cell_h, text_h, fixed_col_count,
-        )
+        for idx, (label, zones) in enumerate(views):
+            if idx > 0:
+                y -= gap
+            title = f"STIRRUP LISTOFER — {label.upper()}" if show_titles else None
+            y = self._draw_one_stirrup_table_dxf(
+                msp,
+                extractor,
+                zones,
+                x0,
+                y,
+                scaled_col_widths,
+                cell_h,
+                text_h,
+                dias,
+                fixed_col_count,
+                cover_cm,
+                hook_type,
+                title=title,
+            )
 
         dxf_doc.saveas(str(out_path))
         if open_file and os.name == "nt":
@@ -1662,15 +1813,20 @@ class StirrupTableDrawer:
         cell_height: float = DEFAULT_STIRRUP_TABLE_CELL_H,
         text_height: float | None = None,
         text_height_factor: float = DEFAULT_STIRRUP_TABLE_TEXT_FACTOR,
+        view_mode: str | None = None,
     ) -> None:
-        """Draw the stirrup schedule table at *insert_point*."""
+        """Draw the stirrup schedule table at *insert_point*.
+
+        *view_mode*: ``\"detailed\"`` | ``\"grouped\"`` | ``\"both\"`` (default both).
+        """
         x0, y0 = insert_point
-        zones = extractor.stirrup_zones
+        all_zones = extractor.stirrup_zones
         cover_cm = extractor.cover
         hook_type = extractor.hook_type
 
-        dias = self._used_diameters(zones)
-        headers, fixed_col_count = self._stirrup_table_headers(dias)
+        views = self._stirrup_view_rows(all_zones, view_mode)
+        dias = self._used_diameters(all_zones)
+        _, fixed_col_count = self._stirrup_table_headers(dias)
 
         cell_h = cell_height * scale
         width_base = col_widths or DEFAULT_STIRRUP_TABLE_COL_WIDTHS
@@ -1681,48 +1837,28 @@ class StirrupTableDrawer:
             scale, text_height, text_height_factor, cell_height,
             DEFAULT_STIRRUP_TABLE_MIN_TEXT_H,
         )
+        gap = cell_h * VIEW_TABLE_GAP_CELLS
+        show_titles = len(views) > 1
 
-        # Header row
         y = y0
-        self._draw_row(
-            x0,
-            y,
-            scaled_col_widths,
-            cell_h,
-            headers,
-            fill_color=HEADER_FILL_COLOR,
-            text_height=row_text_h,
-        )
-        y -= cell_h
-
-        # Data rows
-        zone_type_map = {'start': 'S', 'mid': 'M', 'end': 'E'}
-        for i, zone in enumerate(zones, 1):
-            values = self._stirrup_row_values(i, zone, dias, zone_type_map)
-            self._draw_row(
+        for idx, (label, zones) in enumerate(views):
+            if idx > 0:
+                y -= gap
+            title = f"STIRRUP LISTOFER — {label.upper()}" if show_titles else None
+            y = self._draw_one_stirrup_table_acad(
+                extractor,
+                zones,
                 x0,
                 y,
                 scaled_col_widths,
                 cell_h,
-                values,
-                text_height=row_text_h,
-                shape_col_idx=3,
-                shape_callback=lambda cx, cy, cw, ch, z=zone: self._insert_shape_block(
-                    z,
-                    cx,
-                    cy,
-                    cw,
-                    ch,
-                    cover_cm,
-                    hook_type,
-                ),
+                row_text_h,
+                dias,
+                fixed_col_count,
+                cover_cm,
+                hook_type,
+                title=title,
             )
-            y -= cell_h
-
-        # Summary block: TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL
-        self._draw_stirrup_summary_acad(
-            extractor, dias, x0, y, scaled_col_widths, cell_h, row_text_h, fixed_col_count,
-        )
 
     def _draw_row(
         self,

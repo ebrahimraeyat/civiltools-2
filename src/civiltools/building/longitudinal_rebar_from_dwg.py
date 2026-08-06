@@ -74,6 +74,7 @@ from civiltools.building.listofer_style import (  # noqa: E402
     TEXT_HEIGHT as DEFAULT_LONGITUDINAL_TABLE_TEXT_H,
     TEXT_HEIGHT_FACTOR as DEFAULT_LONGITUDINAL_TABLE_TEXT_FACTOR,
     UNIT_WEIGHT_COL_WIDTH,
+    VIEW_TABLE_GAP_CELLS,
     resolve_text_height,
 )
 from civiltools.building.rebar_from_dwg import (  # noqa: E402
@@ -1136,9 +1137,13 @@ class LongitudinalRebarFromDwg:
                 f"T{rd.shape_type} (POS={rd.pos or '-'})"
             )
 
-    def _used_diameters(self) -> list[int]:
+    def _used_diameters(
+        self,
+        rebars: list[LongitudinalRebarData] | None = None,
+    ) -> list[int]:
         """Return the sorted list of unique rebar diameters actually used."""
-        return sorted({int(rd.diameter) for rd in self.rebars if rd.diameter})
+        source = self.rebars if rebars is None else rebars
+        return sorted({int(rd.diameter) for rd in source if rd.diameter})
 
     @staticmethod
     def _longitudinal_table_headers(dias: list[int]) -> tuple[list[str], int]:
@@ -1146,6 +1151,36 @@ class LongitudinalRebarFromDwg:
         fixed = ["Row", "POS", "Description", "Shape", "Cnt", "Len", "Bend", "UnitW"]
         headers = fixed + [f"T{d}" for d in dias]
         return headers, len(fixed)
+
+    @staticmethod
+    def _longitudinal_row_values(
+        row_no: int,
+        rd: LongitudinalRebarData,
+        dias: list[int],
+    ) -> list[str]:
+        """Build one data-row cell values (shape column left empty for graphics)."""
+        desc = ""
+        if rd.count is not None and rd.diameter is not None and rd.length is not None:
+            desc = f"{rd.count}T{rd.diameter} L={int(round(rd.length))}"
+
+        unit_w = rd.unit_weight()
+        total_w = rd.weight_kg()
+
+        values = [
+            str(row_no),
+            rd.pos or "",
+            desc,
+            "",  # shape cell drawn graphically
+            str(rd.count or ""),
+            str(int(round(rd.length))) if rd.length is not None else "",
+            f"{rd.bend_length:.1f}" if rd.shape_type != "I" else "0",
+            f"{unit_w:.3f}" if unit_w is not None else "",
+        ]
+        for dia in dias:
+            values.append(
+                f"{total_w:.2f}" if rd.diameter == dia and total_w is not None else ""
+            )
+        return values
 
     @staticmethod
     def _diameter_summary_maps(
@@ -1167,6 +1202,24 @@ class LongitudinalRebarFromDwg:
             weight_map[dia] = float(row.get('Total Weight (kg)') or 0.0)
         return length_map, weight_map, grand_weight
 
+    @staticmethod
+    def _longitudinal_view_rows(
+        rebars: list[LongitudinalRebarData],
+        view_mode: str | None,
+    ) -> list[tuple[str, list[LongitudinalRebarData]]]:
+        """Expand *view_mode* into one or two ``(label, rebars)`` table views."""
+        from civiltools.building.listofer_grouping import (
+            DEFAULT_LISTOFER_VIEW_MODE,
+            group_longitudinal_rebars,
+            iter_listofer_views,
+        )
+
+        return iter_listofer_views(
+            rebars,
+            group_longitudinal_rebars,
+            view_mode if view_mode is not None else DEFAULT_LISTOFER_VIEW_MODE,
+        )
+
     def _draw_longitudinal_summary(
         self,
         dias: list[int],
@@ -1176,12 +1229,16 @@ class LongitudinalRebarFromDwg:
         cell_h: float,
         text_h: float,
         fixed_col_count: int,
-    ) -> None:
-        """Draw the per-size TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL block."""
+        rebars: list[LongitudinalRebarData] | None = None,
+    ) -> float:
+        """Draw the per-size TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL block.
+
+        Returns the Y coordinate after the summary block (bottom of last row).
+        """
         if not dias:
-            return
+            return y
         length_map, weight_map, grand_weight = self._diameter_summary_maps(
-            self.summary_by_size()
+            self.summary_by_size(rebars)
         )
         label_width = sum(col_widths[:fixed_col_count])
         dia_widths = col_widths[fixed_col_count:]
@@ -1233,6 +1290,58 @@ class LongitudinalRebarFromDwg:
             text_h,
             color=SUMMARY_FILL_COLOR,
         )
+        return y - cell_h
+
+    def _draw_one_longitudinal_table_acad(
+        self,
+        rebars: list[LongitudinalRebarData],
+        x0: float,
+        y0: float,
+        scaled_col_widths: list[float],
+        cell_h: float,
+        text_h: float,
+        dias: list[int],
+        fixed_col_count: int,
+        scale: float,
+        title: str | None = None,
+    ) -> tuple[float, int]:
+        """Draw one longitudinal table in AutoCAD; return (bottom Y, row count)."""
+        y = y0
+        if title:
+            self._add_text_center(
+                title, x0 + sum(scaled_col_widths) * 0.5, y - cell_h * 0.5, text_h,
+            )
+            y -= cell_h
+
+        headers, _ = self._longitudinal_table_headers(dias)
+        x = x0
+        for w, htxt in zip(scaled_col_widths, headers):
+            self._draw_cell(x, y, w, cell_h)
+            self._add_text_center(
+                htxt, x + w * 0.5, y - cell_h * 0.5, text_h, color=HEADER_FILL_COLOR,
+            )
+            x += w
+        y -= cell_h
+
+        row_count = 0
+        for i, rd in enumerate(rebars, 1):
+            values = self._longitudinal_row_values(i, rd, dias)
+            x = x0
+            for col_idx, (w, value) in enumerate(zip(scaled_col_widths, values)):
+                self._draw_cell(x, y, w, cell_h)
+                if col_idx == 3:
+                    self._draw_shape_in_cell(rd, x, y, w, cell_h, text_h, scale)
+                else:
+                    self._add_text_center(value, x + w * 0.5, y - cell_h * 0.5, text_h)
+                x += w
+            row_count += 1
+            y -= cell_h
+
+        y = self._draw_longitudinal_summary(
+            dias, x0, y, scaled_col_widths, cell_h, text_h, fixed_col_count,
+            rebars=rebars,
+        )
+        return y, row_count
 
     def draw_rebar_shapes(
         self,
@@ -1240,8 +1349,13 @@ class LongitudinalRebarFromDwg:
         scale: float = 1.0,
         col_widths: list[float] | None = None,
         dia_col_width: float = DEFAULT_LONGITUDINAL_TABLE_DIA_COL_WIDTH,
+        view_mode: str | None = None,
     ) -> int:
-        """Draw listofer table and fill shape column via template blocks."""
+        """Draw listofer table and fill shape column via template blocks.
+
+        *view_mode*: ``\"detailed\"`` | ``\"grouped\"`` | ``\"both\"`` (default both).
+        When ``both``, draws the full table then a grouped table below it.
+        """
         if not self.rebars:
             print("No parsed rebars to draw.")
             return 0
@@ -1259,69 +1373,39 @@ class LongitudinalRebarFromDwg:
             min_text_height=DEFAULT_LONGITUDINAL_TABLE_MIN_TEXT_H,
         )
 
+        views = self._longitudinal_view_rows(self.rebars, view_mode)
         dias = self._used_diameters()
-        headers, fixed_col_count = self._longitudinal_table_headers(dias)
+        _, fixed_col_count = self._longitudinal_table_headers(dias)
 
         width_base = col_widths or DEFAULT_LONGITUDINAL_TABLE_COL_WIDTHS
         scaled_col_widths = [w * scale for w in width_base] + [
             dia_col_width * scale for _ in dias
         ]
+        gap = cell_h * VIEW_TABLE_GAP_CELLS
+        show_titles = len(views) > 1
 
-        # Header row
         y = y0
-        x = x0
-        for w, htxt in zip(scaled_col_widths, headers):
-            self._draw_cell(x, y, w, cell_h)
-            self._add_text_center(
-                htxt, x + w * 0.5, y - cell_h * 0.5, text_h, color=HEADER_FILL_COLOR,
+        total_rows = 0
+        for idx, (label, rebars) in enumerate(views):
+            if idx > 0:
+                y -= gap
+            title = f"LONGITUDINAL LISTOFER — {label.upper()}" if show_titles else None
+            y, n = self._draw_one_longitudinal_table_acad(
+                rebars,
+                x0,
+                y,
+                scaled_col_widths,
+                cell_h,
+                text_h,
+                dias,
+                fixed_col_count,
+                scale,
+                title=title,
             )
-            x += w
-        y -= cell_h
+            total_rows += n
 
-        # Data rows
-        row_count = 0
-        for i, rd in enumerate(self.rebars, 1):
-            x = x0
-            desc = ""
-            if rd.count is not None and rd.diameter is not None and rd.length is not None:
-                desc = f"{rd.count}T{rd.diameter} L={int(round(rd.length))}"
-
-            unit_w = rd.unit_weight()
-            total_w = rd.weight_kg()
-
-            values = [
-                str(i),
-                rd.pos or "",
-                desc,
-                "",  # shape cell drawn graphically
-                str(rd.count or ""),
-                str(int(round(rd.length))) if rd.length is not None else "",
-                f"{rd.bend_length:.1f}" if rd.shape_type != "I" else "0",
-                f"{unit_w:.3f}" if unit_w is not None else "",
-            ]
-            for dia in dias:
-                values.append(
-                    f"{total_w:.2f}" if rd.diameter == dia and total_w is not None else ""
-                )
-
-            for col_idx, (w, value) in enumerate(zip(scaled_col_widths, values)):
-                self._draw_cell(x, y, w, cell_h)
-                if col_idx == 3:
-                    self._draw_shape_in_cell(rd, x, y, w, cell_h, text_h, scale)
-                else:
-                    self._add_text_center(value, x + w * 0.5, y - cell_h * 0.5, text_h)
-                x += w
-
-            row_count += 1
-            y -= cell_h
-
-        # Summary block: TOTAL LENGTH / TOTAL WEIGHT / PERCENTAGE / GRAND TOTAL
-        self._draw_longitudinal_summary(
-            dias, x0, y, scaled_col_widths, cell_h, text_h, fixed_col_count,
-        )
-
-        print(f"Drew listofer table with {row_count} row(s) on layer '{self.layer}'.")
-        return row_count
+        print(f"Drew listofer table with {total_rows} row(s) on layer '{self.layer}'.")
+        return total_rows
 
     def _draw_longitudinal_summary_dxf(
         self,
@@ -1333,12 +1417,16 @@ class LongitudinalRebarFromDwg:
         cell_h: float,
         text_h: float,
         fixed_col_count: int,
-    ) -> None:
-        """DXF equivalent of :meth:`_draw_longitudinal_summary`."""
+        rebars: list[LongitudinalRebarData] | None = None,
+    ) -> float:
+        """DXF equivalent of :meth:`_draw_longitudinal_summary`.
+
+        Returns the Y coordinate after the summary block (bottom of last row).
+        """
         if not dias:
-            return
+            return y
         length_map, weight_map, grand_weight = self._diameter_summary_maps(
-            self.summary_by_size()
+            self.summary_by_size(rebars)
         )
         label_width = sum(col_widths[:fixed_col_count])
         dia_widths = col_widths[fixed_col_count:]
@@ -1384,6 +1472,56 @@ class LongitudinalRebarFromDwg:
             y - cell_h * 0.5,
             text_h,
         )
+        return y - cell_h
+
+    def _draw_one_longitudinal_table_dxf(
+        self,
+        msp: Any,
+        rebars: list[LongitudinalRebarData],
+        x0: float,
+        y0: float,
+        scaled_col_widths: list[float],
+        cell_h: float,
+        text_h: float,
+        dias: list[int],
+        fixed_col_count: int,
+        scale: float,
+        title: str | None = None,
+    ) -> float:
+        """Draw one longitudinal table in DXF; return bottom Y."""
+        y = y0
+        if title:
+            self._add_text_center_dxf(
+                msp, title, x0 + sum(scaled_col_widths) * 0.5, y - cell_h * 0.5, text_h,
+            )
+            y -= cell_h
+
+        headers, _ = self._longitudinal_table_headers(dias)
+        x = x0
+        for width, header in zip(scaled_col_widths, headers):
+            self._draw_cell_dxf(msp, x, y, width, cell_h)
+            self._add_text_center_dxf(msp, header, x + width * 0.5, y - cell_h * 0.5, text_h)
+            x += width
+        y -= cell_h
+
+        for i, rd in enumerate(rebars, 1):
+            values = self._longitudinal_row_values(i, rd, dias)
+            x = x0
+            for col_idx, (width, value) in enumerate(zip(scaled_col_widths, values)):
+                self._draw_cell_dxf(msp, x, y, width, cell_h)
+                if col_idx == 3:
+                    self._insert_shape_block_dxf(msp, rd, x, y, width, cell_h, scale)
+                else:
+                    self._add_text_center_dxf(
+                        msp, value, x + width * 0.5, y - cell_h * 0.5, text_h,
+                    )
+                x += width
+            y -= cell_h
+
+        return self._draw_longitudinal_summary_dxf(
+            msp, dias, x0, y, scaled_col_widths, cell_h, text_h, fixed_col_count,
+            rebars=rebars,
+        )
 
     def draw_table_to_dxf(
         self,
@@ -1397,8 +1535,13 @@ class LongitudinalRebarFromDwg:
         output_path: str | Path | None = None,
         filename: str | None = None,
         open_file: bool = True,
+        view_mode: str | None = None,
     ) -> Path:
-        """Write the longitudinal-rebar listofer into a DXF file (template copy + write + open)."""
+        """Write the longitudinal-rebar listofer into a DXF file (template copy + write + open).
+
+        *view_mode*: ``\"detailed\"`` | ``\"grouped\"`` | ``\"both\"`` (default both).
+        When ``both``, draws the full table then a grouped table below it.
+        """
         if not self.rebars:
             raise ValueError("No parsed rebars to draw. Call parse_longitudinal_rebars() first.")
 
@@ -1433,8 +1576,9 @@ class LongitudinalRebarFromDwg:
         msp = dxf_doc.modelspace()
         x0, y0 = insert_point
 
+        views = self._longitudinal_view_rows(self.rebars, view_mode)
         dias = self._used_diameters()
-        headers, fixed_col_count = self._longitudinal_table_headers(dias)
+        _, fixed_col_count = self._longitudinal_table_headers(dias)
 
         cell_h = cell_height * scale
         width_base = col_widths or DEFAULT_LONGITUDINAL_TABLE_COL_WIDTHS
@@ -1449,55 +1593,27 @@ class LongitudinalRebarFromDwg:
             cell_height=cell_height,
             min_text_height=min_text_height,
         )
+        gap = cell_h * VIEW_TABLE_GAP_CELLS
+        show_titles = len(views) > 1
 
-        # Header row
         y = y0
-        x = x0
-        for width, title in zip(scaled_col_widths, headers):
-            self._draw_cell_dxf(msp, x, y, width, cell_h)
-            self._add_text_center_dxf(msp, title, x + width * 0.5, y - cell_h * 0.5, text_h)
-            x += width
-        y -= cell_h
-
-        # Data rows
-        for i, rd in enumerate(self.rebars, 1):
-            x = x0
-            desc = ""
-            if rd.count is not None and rd.diameter is not None and rd.length is not None:
-                desc = f"{rd.count}T{rd.diameter} L={int(round(rd.length))}"
-
-            unit_w = rd.unit_weight()
-            total_w = rd.weight_kg()
-
-            values = [
-                str(i),
-                rd.pos or "",
-                desc,
-                "",  # shape cell drawn graphically
-                str(rd.count or ""),
-                str(int(round(rd.length))) if rd.length is not None else "",
-                f"{rd.bend_length:.1f}" if rd.shape_type != "I" else "0",
-                f"{unit_w:.3f}" if unit_w is not None else "",
-            ]
-            for dia in dias:
-                values.append(
-                    f"{total_w:.2f}" if rd.diameter == dia and total_w is not None else ""
-                )
-
-            for col_idx, (width, value) in enumerate(zip(scaled_col_widths, values)):
-                self._draw_cell_dxf(msp, x, y, width, cell_h)
-                if col_idx == 3:
-                    self._insert_shape_block_dxf(msp, rd, x, y, width, cell_h, scale)
-                else:
-                    self._add_text_center_dxf(
-                        msp, value, x + width * 0.5, y - cell_h * 0.5, text_h
-                    )
-                x += width
-            y -= cell_h
-
-        self._draw_longitudinal_summary_dxf(
-            msp, dias, x0, y, scaled_col_widths, cell_h, text_h, fixed_col_count,
-        )
+        for idx, (label, rebars) in enumerate(views):
+            if idx > 0:
+                y -= gap
+            title = f"LONGITUDINAL LISTOFER — {label.upper()}" if show_titles else None
+            y = self._draw_one_longitudinal_table_dxf(
+                msp,
+                rebars,
+                x0,
+                y,
+                scaled_col_widths,
+                cell_h,
+                text_h,
+                dias,
+                fixed_col_count,
+                scale,
+                title=title,
+            )
 
         dxf_doc.saveas(str(out_path))
         if open_file and os.name == "nt":
@@ -1525,14 +1641,21 @@ class LongitudinalRebarFromDwg:
             'u_shape': sum(1 for r in self.rebars if r.shape_type == 'U'),
         }
 
-    def summary_by_size(self) -> list[dict[str, Any]]:
+    def summary_by_size(
+        self,
+        rebars: list[LongitudinalRebarData] | None = None,
+    ) -> list[dict[str, Any]]:
         """Group complete rebars by diameter and return summary rows.
 
         Each row: size (mm), total length (m), number (ceil of total_length /
         12 m), unit weight (kg/m), total weight (kg), plus a TOTAL row.
+
+        If *rebars* is given, summarize that list (e.g. a grouped view);
+        otherwise use ``self.rebars``.
         """
+        source = self.rebars if rebars is None else rebars
         groups: dict[int, float] = defaultdict(float)  # dia -> total length (m)
-        for rd in self.rebars:
+        for rd in source:
             if rd.diameter is None or rd.count is None or rd.length is None:
                 continue
             groups[rd.diameter] += (rd.count * rd.length) / 100.0  # cm -> m

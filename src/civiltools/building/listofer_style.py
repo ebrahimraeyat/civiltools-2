@@ -45,6 +45,10 @@ COUNT_COL_WIDTH = 12.0
 UNIT_WEIGHT_COL_WIDTH = 14.0
 DIA_COL_WIDTH = 14.0
 
+# Gap between detailed and grouped tables when view_mode="both"
+# (multiples of the scaled cell height).
+VIEW_TABLE_GAP_CELLS = 2.0
+
 # ---------------------------------------------------------------------------
 #  Colors (AutoCAD Color Index / ACI)
 # ---------------------------------------------------------------------------
