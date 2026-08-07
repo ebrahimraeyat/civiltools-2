@@ -18,13 +18,16 @@ directly from :mod:`civiltools.building.rebar_from_dwg`.
 
 Block attribute specification
 -----------------------------
-Every ``"buble"`` block exposes these attribute tags (case-insensitive):
+Typical longitudinal/slab rebar blocks expose these tags (case-insensitive):
 
-- ``DES1`` : count + diameter, e.g. ``"2T25"`` -> count = 2, diameter = 25 mm.
+- ``DES1`` : rebar designation text; size is read from the diameter symbol,
+  e.g. ``"2T25"``, ``"T16(B)"``, ``"T12@120(T)"`` -> diameter = 25/16/12 mm.
 - ``DES2`` : total length, e.g. ``"L=240"`` -> length = 240 cm.
-- ``Des3`` : shape identifier ``TI`` / ``TL`` / ``TU`` (optionally + a number),
+- ``DES3`` : shape identifier ``TI`` / ``TL`` / ``TU`` (optionally + a number),
   ``TI`` = straight, ``TL`` = L-shape (one hook), ``TU`` = U-shape (two hooks).
-- ``PO``   : position number — ignored.
+- ``N``    : count (optional fallback).
+- ``TN``   : total count (primary source for quantity).
+- ``PO``   : position number (informational).
 
 The shape's trailing number (e.g. ``TL40``) is used only to recognise the shape
 type; the drawn bend length is computed from
@@ -104,14 +107,30 @@ _DIA = r'(?:%%[cC]|[∅Ø⌀øφΦ~T])'
 #  Regex patterns
 # ---------------------------------------------------------------------------
 
-# DES1: count + diameter, e.g. 2T25  -> (2, 25)
-RE_DES1 = re.compile(rf'(\d+)\s*{_DIA}\s*(\d+)', re.IGNORECASE)
+# DES1 legacy form: count + diameter, e.g. 2T25 -> (2, 25)
+RE_DES1_COUNT_DIA = re.compile(rf'(\d+)\s*{_DIA}\s*(\d+)', re.IGNORECASE)
+
+# DES1 diameter token: T16, %%c20, ∅25, ...
+RE_DES1_DIA = re.compile(rf'{_DIA}\s*(\d+)', re.IGNORECASE)
 
 # DES2: total length, e.g. L=240 or L=240cm / L=2.4m
 RE_DES2_LEN = re.compile(r'L\s*=\s*(\d+(?:\.\d+)?)\s*(cm|m)?', re.IGNORECASE)
 
 # Des3: shape identifier TI / TL / TU with optional trailing number, e.g. TL40
 RE_SHAPE = re.compile(r'T\s*([ILU])\s*(\d+(?:\.\d+)?)?', re.IGNORECASE)
+
+
+def _parse_int_attr(value: str | None) -> int | None:
+    """Parse an integer attribute value; return ``None`` on failure."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
 
 
 def _length_cm(value: float, unit: str | None) -> float:
@@ -186,6 +205,11 @@ class LongitudinalRebarData:
     anchor_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     direction: tuple[float, float, float] = (1.0, 0.0, 0.0)  # unit vector
     pos: str = ""                          # PO attribute (informational)
+    des1: str = ""
+    des2: str = ""
+    des3: str = ""
+    n: int | None = None
+    tn: int | None = None
     block_id: int | None = None
     leader_id: int | None = None
     raw_texts: list[str] = field(default_factory=list)
@@ -256,6 +280,8 @@ class LongitudinalRebarFromDwg:
         self,
         doc: Any = None,
         block_name: str | None = DEFAULT_BLOCK_NAME,
+        block_names: list[str] | tuple[str, ...] | set[str] | None = None,
+        block_layers: list[str] | tuple[str, ...] | set[str] | None = None,
         hook_type: str = '90',
         layer: str = DEFAULT_SHAPE_LAYER,
         template_path: str | Path | None = DEFAULT_LISTOFER_TEMPLATE,
@@ -269,8 +295,20 @@ class LongitudinalRebarFromDwg:
         else:
             self.acad = getattr(doc, "Application", None)
             self.doc = doc
-        # ``None`` block_name means: accept every block reference.
-        self.block_name = block_name
+        # ``None``/empty filters mean: accept every block reference.
+        self.block_name = block_name  # backward compatibility
+        names: set[str] = set()
+        if block_names:
+            names.update(str(n).strip().lower() for n in block_names if str(n).strip())
+        elif block_name and str(block_name).strip():
+            names.add(str(block_name).strip().lower())
+        self.block_names: set[str] | None = names or None
+
+        layers: set[str] = set()
+        if block_layers:
+            layers.update(str(n).strip().lower() for n in block_layers if str(n).strip())
+        self.block_layers: set[str] | None = layers or None
+
         self.hook_type = hook_type
         self.layer = layer
         self.template_path = Path(template_path) if template_path else None
@@ -764,6 +802,50 @@ class LongitudinalRebarFromDwg:
                 continue
         return ""
 
+    @staticmethod
+    def _block_layer_of(block_ref: Any) -> str:
+        """Best-effort block layer name."""
+        try:
+            return str(getattr(block_ref, "Layer", "") or "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _parse_des1(des1: str) -> tuple[int | None, int | None]:
+        """Parse DES1 into ``(legacy_count, diameter_mm)``.
+
+        Supports both classic forms (``2T25``) and designation-only forms
+        (``T16(B)``, ``T12@120(T)``). The caller decides how to source count.
+        """
+        text = str(des1 or "").strip()
+        if not text:
+            return None, None
+
+        legacy_count: int | None = None
+        diameter: int | None = None
+
+        m_count = RE_DES1_COUNT_DIA.search(text)
+        if m_count:
+            legacy_count = int(m_count.group(1))
+            diameter = int(m_count.group(2))
+
+        if diameter is None:
+            m_dia = RE_DES1_DIA.search(text)
+            if m_dia:
+                diameter = int(m_dia.group(1))
+
+        return legacy_count, diameter
+
+    def _block_matches_filters(self, block_ref: Any) -> bool:
+        """Return True when block passes configured name/layer filters."""
+        bname = self._block_name_of(block_ref).strip().lower()
+        blayer = self._block_layer_of(block_ref).strip().lower()
+        if self.block_names is not None and bname not in self.block_names:
+            return False
+        if self.block_layers is not None and blayer not in self.block_layers:
+            return False
+        return True
+
     def _point3(self, p: Any) -> tuple[float, float, float]:
         """Normalise a COM point (2- or 3-tuple) to a 3-tuple."""
         return (p[0], p[1], p[2] if len(p) > 2 else 0.0)
@@ -839,7 +921,6 @@ class LongitudinalRebarFromDwg:
         self.blocks = []
         self.leaders = []
         self.text_objects = []
-        want = (self.block_name or "").strip().lower()
 
         try:
             msp = self.doc.ModelSpace
@@ -848,7 +929,7 @@ class LongitudinalRebarFromDwg:
                 name = obj.ObjectName
 
                 if name == "AcDbBlockReference":
-                    if not want or self._block_name_of(obj).strip().lower() == want:
+                    if self._block_matches_filters(obj):
                         self.blocks.append(obj)
                 elif name == "AcDbLeader":
                     info = self._read_leader(obj)
@@ -963,16 +1044,34 @@ class LongitudinalRebarFromDwg:
             rd = LongitudinalRebarData(block_id=getattr(block, 'ObjectID', None))
             rd.raw_texts = [f"{k}={v}" for k, v in attrs.items()]
 
-            # DES1 -> count + diameter
-            des1 = attrs.get("DES1", "")
-            m1 = RE_DES1.search(des1)
-            if m1:
-                rd.count = int(m1.group(1))
-                rd.diameter = int(m1.group(2))
+            rd.des1 = attrs.get("DES1", "")
+            rd.des2 = attrs.get("DES2", "")
+            rd.des3 = attrs.get("DES3", "")
+            rd.n = _parse_int_attr(attrs.get("N", ""))
+            rd.tn = _parse_int_attr(attrs.get("TN", ""))
+
+            # DES1 -> diameter (+ optional legacy count from classic 2T25 style)
+            des1_count, des1_dia = self._parse_des1(rd.des1)
+            rd.diameter = des1_dia
+
+            # Quantity source priority: TN, then N, then legacy DES1 count.
+            if rd.tn is not None:
+                rd.count = rd.tn
+                if rd.n is not None and rd.n != rd.tn:
+                    rd.warnings.append(f"N={rd.n} differs from TN={rd.tn}; used TN")
+                if des1_count is not None and des1_count != rd.tn:
+                    rd.warnings.append(
+                        f"DES1 count={des1_count} differs from TN={rd.tn}; used TN"
+                    )
+            elif rd.n is not None:
+                rd.count = rd.n
+                rd.warnings.append("TN missing; used N as count")
+            elif des1_count is not None:
+                rd.count = des1_count
+                rd.warnings.append("TN/N missing; used legacy DES1 count")
 
             # DES2 -> length (cm)
-            des2 = attrs.get("DES2", "")
-            m2 = RE_DES2_LEN.search(des2)
+            m2 = RE_DES2_LEN.search(rd.des2)
             if m2:
                 rd.length = _length_cm(float(m2.group(1)), m2.group(2))
 
@@ -980,8 +1079,7 @@ class LongitudinalRebarFromDwg:
             rd.pos = attrs.get("PO", "")
 
             # Des3 -> shape identifier, else search nearby text, else default TI
-            shape_src = attrs.get("DES3", "")
-            ms = RE_SHAPE.search(shape_src)
+            ms = RE_SHAPE.search(rd.des3)
             if ms:
                 rd.shape_type = ms.group(1).upper()
             else:
