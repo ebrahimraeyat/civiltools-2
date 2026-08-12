@@ -45,18 +45,19 @@ if %errorlevel% neq 0 (
 echo  Code updated.
 echo.
 
-:: Run (pixi will auto-install any new dependencies)
+:: Run (pip will pick up any new dependencies)
 echo [2/2] Launching civilTools ...
 echo.
 
-where pixi >nul 2>&1
+where conda >nul 2>&1
 if %errorlevel% neq 0 (
-    echo  pixi not found. Running full setup ...
+    echo  conda not found. Running full setup ...
     call "%~dp0install.bat"
     exit /b
 )
 
-pixi run start
+call conda run -n civiltools pip install -e "%~dp0.[dev]"
+call conda run -n civiltools python -m civiltools
 if %errorlevel% neq 0 (
     echo.
     echo  Application exited with an error.

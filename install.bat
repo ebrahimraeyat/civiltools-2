@@ -47,41 +47,73 @@ echo      Git found.
 echo.
 
 :: ---------------------------------------------------------------
-:: 2. Check / install pixi
+:: 2. Check / install conda (Miniconda)
 :: ---------------------------------------------------------------
-echo [2/3] Checking pixi ...
-where pixi >nul 2>&1
-if %errorlevel% equ 0 goto :pixi_ok
+echo [2/3] Checking conda ...
+where conda >nul 2>&1
+if %errorlevel% equ 0 goto :conda_ok
 
-echo      pixi not found. Installing pixi ...
+echo      conda not found. Installing Miniconda ...
+set "CONDA_INSTALLER=%TEMP%\miniconda-installer.exe"
 set "PS_PATH=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
-"%PS_PATH%" -NoProfile -ExecutionPolicy ByPass -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://pixi.sh/install.ps1 | iex }"
+"%PS_PATH%" -NoProfile -Command "& { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe' -OutFile '%CONDA_INSTALLER%' }"
+if not exist "%CONDA_INSTALLER%" (
+    echo      ERROR: Failed to download Miniconda installer.
+    echo      Please install Miniconda manually from https://docs.conda.io/en/latest/miniconda.html
+    pause
+    exit /b 1
+)
+start /wait "" "%CONDA_INSTALLER%" /InstallationType=JustMe /RegisterPython=0 /AddToPath=1 /S /D=%UserProfile%\Miniconda3
+del "%CONDA_INSTALLER%" 2>nul
 
 call :refresh_path
-where pixi >nul 2>&1
+where conda >nul 2>&1
 if %errorlevel% neq 0 (
-    echo      pixi installation may require reopening this terminal.
+    echo      conda installation may require reopening this terminal.
     echo      Please close this window and double-click install.bat again.
     pause
     exit /b 1
 )
-echo      pixi installed successfully.
-goto :pixi_done
+echo      Miniconda installed successfully.
+goto :conda_done
 
-:pixi_ok
-echo      pixi found.
+:conda_ok
+echo      conda found.
 
-:pixi_done
+:conda_done
 echo.
 
 :: ---------------------------------------------------------------
-:: 3. Install environment and run
+:: 3. Create environment and run
 :: ---------------------------------------------------------------
 echo [3/3] Setting up environment and launching civilTools ...
 echo      (First run downloads Python, pythonocc-core, and all
 echo       dependencies. This may take several minutes.)
 echo.
-pixi run start
+
+call conda env list | findstr /C:"civiltools" >nul 2>&1
+if %errorlevel% equ 0 goto :env_exists
+
+echo      Creating conda environment "civiltools" ...
+call conda create -y -n civiltools python=3.12 pythonocc-core=7.9 -c conda-forge
+if %errorlevel% neq 0 (
+    echo.
+    echo      ERROR: Failed to create the conda environment.
+    pause
+    exit /b 1
+)
+
+:env_exists
+echo      Installing civilTools and its dependencies ...
+call conda run -n civiltools pip install -e "%~dp0.[dev]"
+if %errorlevel% neq 0 (
+    echo.
+    echo      ERROR: Failed to install dependencies.
+    pause
+    exit /b 1
+)
+
+call conda run -n civiltools python -m civiltools
 if %errorlevel% neq 0 (
     echo.
     echo      ERROR: Application failed to start.

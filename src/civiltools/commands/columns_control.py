@@ -25,7 +25,6 @@ class ColumnsControlCheck(BaseCommand):
     menu_path = "Control"
     tooltip = "Compare adjacent-story column sections for adequacy"
     table_model = "ColumnsControlModel"
-    dialog_class = "civiltools.gui.dialogs.columns_dialog.ColumnsControlDialog"
 
     @classmethod
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
@@ -36,25 +35,30 @@ class ColumnsControlCheck(BaseCommand):
             column_names = etabs.frame_obj.concrete_section_names('Column')
             section_areas = etabs.frame_obj.get_section_area(column_names)
 
-            # Replace column names with section names
-            for col in columns_type_sections_df.columns:
-                for row_idx in columns_type_sections_df.index:
-                    name = columns_type_sections_df.at[row_idx, col]
+            nrows, ncols = columns_type_names_df.shape
+
+            # Replace column names with section names.
+            # Use positional (iat) access — duplicate row/column labels (e.g. two
+            # empty stacks) would make label-based `.at[]` return a Series instead
+            # of a scalar, breaking truthiness checks.
+            for j in range(ncols):
+                for i in range(nrows):
+                    name = columns_type_sections_df.iat[i, j]
                     if pd.notna(name) and name != '':
                         sec = etabs.SapModel.FrameObj.GetSection(str(name))[0]
-                        columns_type_sections_df.at[row_idx, col] = sec or ''
+                        columns_type_sections_df.iat[i, j] = sec or ''
                     else:
-                        columns_type_sections_df.at[row_idx, col] = ''
+                        columns_type_sections_df.iat[i, j] = ''
 
             # Build comparison results
-            nrows = len(columns_type_names_df)
             comparison_results = {}
-            for col in columns_type_names_df.columns:
-                for row_idx_pos in range(nrows - 1):
-                    row_idx = columns_type_names_df.index[row_idx_pos]
-                    above_col = columns_type_names_df.at[row_idx, col]
-                    below_row_idx = columns_type_names_df.index[row_idx_pos + 1]
-                    below_col = columns_type_names_df.at[below_row_idx, col]
+            for j in range(ncols):
+                col = columns_type_names_df.columns[j]
+                for i in range(nrows - 1):
+                    row_idx = columns_type_names_df.index[i]
+                    below_row_idx = columns_type_names_df.index[i + 1]
+                    above_col = columns_type_names_df.iat[i, j]
+                    below_col = columns_type_names_df.iat[i + 1, j]
                     if (pd.notna(above_col) and above_col != ''
                             and pd.notna(below_col) and below_col != ''):
                         try:

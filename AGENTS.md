@@ -6,11 +6,12 @@ See [README.md](README.md) for install/build details. Don't duplicate that here.
 
 ## Environment & commands
 
-- **Package manager is pixi** (conda-based). `pythonocc-core` is conda-only — **never `pip install` it**.
-- Run app: `pixi run start` (or `python -m civiltools`).
-- Tests: `pixi run test` (or `pytest`). Config in [pytest.ini](pytest.ini); `qt_api = pyside6`, tests live in [tests/](tests).
+- **Package manager is conda** (env name `civiltools`). `pythonocc-core` is conda-only — **never `pip install` it**; install it via `conda install -c conda-forge pythonocc-core=7.9`.
+- Activate with `conda activate civiltools` before running any command below.
+- Run app: `python -m civiltools`.
+- Tests: `pytest`. Config in [pytest.ini](pytest.ini); `qt_api = pyside6`, tests live in [tests/](tests).
 - Lint/format: `ruff` — `line-length = 100`, target `py312`, rules `E,F,W,I,N,UP` (see [pyproject.toml](pyproject.toml)).
-- Builds: `pixi run build-pyinstaller` (dev) or `pixi run build-nuitka` (source-protected release).
+- Builds: `python build/build_pyinstaller.py` (dev) or `python build/build_nuitka.py` (source-protected release).
 - `etabs-api` is an **external dependency** (git/local at `G:\etabs_api\src`), not part of this repo. ETABS commands need a *running* ETABS instance to execute.
 
 ## Architecture

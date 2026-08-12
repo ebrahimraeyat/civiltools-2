@@ -7,17 +7,18 @@ echo              civilTools - Launcher
 echo ============================================================
 echo.
 
-:: Check pixi is available
-where pixi >nul 2>&1
+:: Check conda is available
+where conda >nul 2>&1
 if %errorlevel% neq 0 (
-    echo  pixi not found. Running full setup ...
+    echo  conda not found. Running full setup ...
     echo.
     call "%~dp0install.bat"
     exit /b
 )
 
-:: Check that pixi environment exists
-if not exist ".pixi" (
+:: Check that the civiltools conda environment exists
+call conda env list | findstr /C:"civiltools" >nul 2>&1
+if %errorlevel% neq 0 (
     echo  Environment not found. Running full setup ...
     echo.
     call "%~dp0install.bat"
@@ -26,7 +27,7 @@ if not exist ".pixi" (
 
 echo  Starting civilTools ...
 echo.
-pixi run start
+call conda run -n civiltools python -m civiltools
 if %errorlevel% neq 0 (
     echo.
     echo  Application exited with an error.
