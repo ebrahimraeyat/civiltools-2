@@ -155,11 +155,17 @@ class ResultWidget(QWidget):
             )
         # FreeCAD called resizeColumnsToContents() once — do not keep
         # ResizeToContents mode (recalculates on every paint and freezes large tables).
-        self._table.horizontalHeader().setSectionResizeMode(
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
-        self._table.horizontalHeader().setStretchLastSection(True)
+        header.setStretchLastSection(False)
         self._table.resizeColumnsToContents()
+        if self._model.columnCount():
+            last_column = self._model.columnCount() - 1
+            self._table.setColumnWidth(
+                last_column, min(self._table.columnWidth(last_column), 300)
+            )
 
         # Populate column combo (skip hidden system columns)
         for col_name in self._model.df.columns:
