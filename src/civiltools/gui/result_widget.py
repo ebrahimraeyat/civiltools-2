@@ -13,15 +13,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, Signal
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, Signal, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QCheckBox, QTableView, QHeaderView,
-    QFileDialog, QMessageBox, QApplication, QSplitter, QTextEdit,
+    QFileDialog, QMessageBox, QApplication, QSplitter, QTextEdit, QFrame,
+    QAbstractItemView,
 )
 
 from civiltools.gui.table_models import PandasModel
@@ -37,6 +38,10 @@ class ResultWidget(QWidget):
         self,
         df: pd.DataFrame,
         model_class: type[PandasModel] = PandasModel,
+        delegate_class: type | None = None,
+        legend_items: list[tuple[str, str]] | None = None,
+        sortable: bool = True,
+        cell_selected: Callable[[int, int], None] | None = None,
         title: str = "",
         summary: str = "",
         ok: bool = True,
@@ -46,6 +51,20 @@ class ResultWidget(QWidget):
         super().__init__(parent)
         self._title = title
         self._df = df
+        self._cell_selected = cell_selected
+        # Defer ETABS selection so double-click can open the editor without
+        # waiting on a blocking COM call from the first half of the double-click.
+        self._pending_cell: tuple[int, int] | None = None
+        self._select_timer = QTimer(self)
+        self._select_timer.setSingleShot(True)
+        # Slightly past the OS double-click threshold so a real double-click
+        # never pays for ETABS selection before the editor opens.
+        try:
+            interval = int(QApplication.doubleClickInterval()) + 50
+        except Exception:
+            interval = 350
+        self._select_timer.setInterval(max(interval, 300))
+        self._select_timer.timeout.connect(self._emit_pending_cell_selection)
 
         # ── Layout ──────────────────────────────────────────────────
         main_layout = QVBoxLayout(self)
@@ -90,10 +109,10 @@ class ResultWidget(QWidget):
         self._splitter = QSplitter(Qt.Orientation.Vertical)
 
         self._table = QTableView()
-        self._table.setSortingEnabled(True)
+        self._table.setSortingEnabled(sortable)
         self._table.setAlternatingRowColors(True)
-        self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
+        self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectItems)
+        self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self._splitter.addWidget(self._table)
 
         # Bottom pane: a horizontal QSplitter that holds
@@ -111,7 +130,11 @@ class ResultWidget(QWidget):
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
 
-        main_layout.addWidget(self._splitter)
+        content_layout = QHBoxLayout()
+        content_layout.addWidget(self._splitter, 1)
+        if legend_items:
+            content_layout.addWidget(self._build_color_legend(legend_items))
+        main_layout.addLayout(content_layout, 1)
 
         # Summary bar
         self._summary_lbl = QLabel()
@@ -123,10 +146,20 @@ class ResultWidget(QWidget):
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._table.setModel(self._proxy)
+        if delegate_class is not None:
+            # Match FreeCAD ControlColumnResultWidget: custom delegate, no sorting.
+            self._table.setItemDelegate(delegate_class(self._table))
+            self._table.setEditTriggers(
+                QAbstractItemView.EditTrigger.DoubleClicked
+                | QAbstractItemView.EditTrigger.EditKeyPressed
+            )
+        # FreeCAD called resizeColumnsToContents() once — do not keep
+        # ResizeToContents mode (recalculates on every paint and freezes large tables).
         self._table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.ResizeToContents
+            QHeaderView.ResizeMode.Interactive
         )
         self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.resizeColumnsToContents()
 
         # Populate column combo (skip hidden system columns)
         for col_name in self._model.df.columns:
@@ -168,6 +201,34 @@ class ResultWidget(QWidget):
         # Connect row-click detail pane (after model is assigned)
         if self._detail_col in self._model.df.columns:
             self._table.selectionModel().selectionChanged.connect(self._on_row_selected)
+        # FreeCAD wired clicked → show_frame. We keep that behaviour for a true
+        # single-click, but cancel it when the user double-clicks to edit.
+        if self._cell_selected is not None:
+            self._table.clicked.connect(self._on_cell_clicked)
+            self._table.doubleClicked.connect(self._on_cell_double_clicked)
+
+    def _build_color_legend(self, legend_items: list[tuple[str, str]]) -> QWidget:
+        """Build a compact sidebar explaining table background colors."""
+        panel = QFrame()
+        panel.setFrameShape(QFrame.Shape.StyledPanel)
+        panel.setFixedWidth(190)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        title = QLabel("Color legend")
+        title.setStyleSheet("font-weight: bold;")
+        layout.addWidget(title)
+        for color, label in legend_items:
+            row = QHBoxLayout()
+            swatch = QLabel()
+            swatch.setFixedSize(16, 16)
+            swatch.setStyleSheet(f"background-color: {color}; border: 1px solid #666;")
+            row.addWidget(swatch)
+            row.addWidget(QLabel(label), 1)
+            layout.addLayout(row)
+        layout.addStretch()
+        return panel
 
     # ── Public API for extending the bottom panel ───────────────────
 
@@ -195,6 +256,34 @@ class ResultWidget(QWidget):
         detail_text = self._model.df.iloc[df_row].get(self._detail_col, "")
         self._detail_pane.setPlainText(str(detail_text))
         self.selection_changed.emit(df_row)
+
+    def _on_cell_clicked(self, proxy_index):
+        """Queue ETABS selection; cancelled if a double-click follows."""
+        if self._cell_selected is None:
+            return
+        # Never call COM while an in-cell editor is open.
+        if self._table.state() is not QAbstractItemView.State.NoState:
+            self._select_timer.stop()
+            self._pending_cell = None
+            return
+        source_index = self._proxy.mapToSource(proxy_index)
+        self._pending_cell = (source_index.row(), source_index.column())
+        self._select_timer.start()
+
+    def _on_cell_double_clicked(self, _proxy_index):
+        """Open editor without paying the ETABS selection cost first."""
+        self._select_timer.stop()
+        self._pending_cell = None
+
+    def _emit_pending_cell_selection(self):
+        if self._cell_selected is None or self._pending_cell is None:
+            return
+        if self._table.state() is not QAbstractItemView.State.NoState:
+            self._pending_cell = None
+            return
+        row, col = self._pending_cell
+        self._pending_cell = None
+        self._cell_selected(row, col)
 
     # ── Filter slots ────────────────────────────────────────────────
 

@@ -373,6 +373,25 @@ _COLUMNS_CONTROL_COLORS: dict[str, str] = {
     'not_checked': 'white',
 }
 
+_COLUMNS_CONTROL_LABELS: dict[str, str] = {
+    'section_area': 'Section area',
+    'corner_rebar_size': 'Corner bar size',
+    'longitudinal_rebar_size': 'Longitudinal bar size',
+    'total_rebar_area': 'Total rebar area',
+    'local_axes': 'Local axes',
+    'section_dimension': 'Section dimensions',
+    'rebar_number': 'Number of rebars',
+    'rebar_slop': 'Rebar slope',
+    'material': 'Concrete material',
+    'OK': 'OK',
+    'not_checked': 'Not checked',
+}
+
+COLUMNS_CONTROL_LEGEND: list[tuple[str, str]] = [
+    (_COLUMNS_CONTROL_COLORS[result], _COLUMNS_CONTROL_LABELS[result])
+    for result in _COLUMNS_CONTROL_LABELS
+]
+
 
 class ColumnsControlModel(PandasModel):
     """Columns control — color-code cells by comparison result (enum-based).
@@ -380,12 +399,16 @@ class ColumnsControlModel(PandasModel):
     The ``kwargs`` dict must contain:
     - ``comparison_results``: dict of (row_label, col_name) -> result_name
     - ``columns_type_names_df``: DataFrame of column names (for header/index)
+    - ``section_areas``: dict of section name -> area, for the edit delegate
+    - ``etabs``: live EtabsModel connection, used to push section edits
     """
 
     def __init__(self, df: pd.DataFrame, kwargs: dict | None = None):
         super().__init__(df, kwargs)
         self._comparison = self.kwargs.get('comparison_results', {})
         self._names_df = self.kwargs.get('columns_type_names_df', df)
+        self._section_areas = self.kwargs.get('section_areas', {})
+        self._etabs = self.kwargs.get('etabs')
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if role != Qt.ItemDataRole.DisplayRole:
@@ -420,6 +443,90 @@ class ColumnsControlModel(PandasModel):
             return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
 
         return None
+
+    def _compare_result(self, row: int, col: int) -> str:
+        """Compare the current above/below section pair using the actual frame names."""
+        if row >= self._names_df.shape[0] - 1:
+            return 'OK'
+
+        above_frame = self._names_df.iat[row, col]
+        below_frame = self._names_df.iat[row + 1, col]
+        above_sec = self.df.iat[row, col]
+        below_sec = self.df.iat[row + 1, col]
+
+        if (
+            pd.isna(above_frame) or str(above_frame) == ''
+            or pd.isna(below_frame) or str(below_frame) == ''
+            or pd.isna(above_sec) or str(above_sec) == ''
+            or pd.isna(below_sec) or str(below_sec) == ''
+        ):
+            return 'not_checked'
+
+        if self._etabs is None:
+            return 'not_checked'
+
+        try:
+            result = self._etabs.prop_frame.compare_two_columns(
+                str(below_frame),
+                str(above_frame),
+                self._section_areas,
+                below_sec=str(below_sec),
+                above_sec=str(above_sec),
+            )
+            return getattr(result, 'name', 'not_checked') or 'not_checked'
+        except Exception:
+            return 'not_checked'
+
+    def flags(self, index: QModelIndex):
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        base = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        frame_name = self._names_df.iat[index.row(), index.column()]
+        if self._etabs is not None and pd.notna(frame_name) and frame_name != '':
+            base |= Qt.ItemFlag.ItemIsEditable
+        return base
+
+    def setData(self, index: QModelIndex, value, role=Qt.ItemDataRole.EditRole):
+        """Update the table and recompute the comparison status for the edited stack."""
+        if role != Qt.ItemDataRole.EditRole or not index.isValid() or not value:
+            return False
+        row, col = index.row(), index.column()
+        frame_name = self._names_df.iat[row, col]
+        if pd.isna(frame_name) or frame_name == '':
+            return False
+
+        matching_rows = [
+            i for i in range(self._names_df.shape[0])
+            if self._names_df.iat[i, col] == frame_name
+        ]
+        if not matching_rows:
+            matching_rows = [row]
+
+        for matching_row in matching_rows:
+            self.df.iat[matching_row, col] = value
+
+        affected_rows = set(matching_rows)
+        affected_rows.update(r - 1 for r in matching_rows if r > 0)
+
+        for affected_row in affected_rows:
+            row_label = self.df.index[affected_row]
+            col_name = self.df.columns[col]
+            self._comparison[(row_label, col_name)] = self._compare_result(affected_row, col)
+
+        # Recompute the actual above/below comparison for the edited stack.
+        for affected_row in sorted(affected_rows):
+            if affected_row < self._names_df.shape[0] - 1:
+                row_label = self.df.index[affected_row]
+                col_name = self.df.columns[col]
+                self._comparison[(row_label, col_name)] = self._compare_result(affected_row, col)
+
+        top_left = self.index(min(affected_rows), col)
+        bottom_right = self.index(max(affected_rows), col)
+        self.dataChanged.emit(
+            top_left, bottom_right,
+            [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.BackgroundRole],
+        )
+        return True
 
 
 # =====================================================================

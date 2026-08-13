@@ -141,6 +141,7 @@ from civiltools.etabs.connection import EtabsConnection
 from civiltools.commands import REGISTRY
 from civiltools.commands.base import BaseCommand, CommandResult
 from civiltools.gui import table_models
+from civiltools.gui import delegates
 from civiltools.gui.result_widget import ResultWidget
 from civiltools.gui.connect_dialog import ConnectDialog
 from civiltools.gui.param_dialog import ParamDialog
@@ -161,6 +162,14 @@ _MODEL_MAP: dict[str, type] = {
     "ColumnsControlModel": table_models.ColumnsControlModel,
     "RebarModel": table_models.RebarModel,
     "RebarSummaryModel": table_models.RebarSummaryModel,
+}
+
+_DELEGATE_MAP: dict[str, type] = {
+    "ColumnsControlModel": delegates.ColumnsControlDelegate,
+}
+
+_LEGEND_MAP: dict[str, list[tuple[str, str]]] = {
+    "ColumnsControlModel": table_models.COLUMNS_CONTROL_LEGEND,
 }
 
 
@@ -269,11 +278,14 @@ class MainWindow(QMainWindow):
         # (handled via existing settings dialog or inline in Help > About)
 
         # ── 10-second polling timer ────────────────────────────────
-        self._poll_busy: bool = False   # guard against re-entrancy
+        # FreeCAD had no background COM poll. Pause it for tabs that call
+        # ETABS on every click (Columns Control) to avoid UI freezes.
+        self._poll_busy: bool = False
         self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(10_000)  # 10 seconds
+        self._poll_timer.setInterval(10_000)
         self._poll_timer.timeout.connect(self._poll_etabs_status)
         self._poll_timer.start()
+        self._tabs.currentChanged.connect(self._sync_poll_with_current_tab)
 
     # ── Tab management ──────────────────────────────────────────────
 
@@ -282,6 +294,7 @@ class MainWindow(QMainWindow):
         self._tabs.removeTab(index)
         if widget:
             widget.deleteLater()
+        self._sync_poll_with_current_tab(self._tabs.currentIndex())
 
     def _add_result_tab(
         self, result: CommandResult, cmd_class: type[BaseCommand]
@@ -294,6 +307,14 @@ class MainWindow(QMainWindow):
         # Get the appropriate model class
         model_name = getattr(cmd_class, "table_model", "PandasModel")
         model_class = _MODEL_MAP.get(model_name, table_models.PandasModel)
+        delegate_class = _DELEGATE_MAP.get(model_name)
+        legend_items = _LEGEND_MAP.get(model_name)
+        cell_selected = None
+        pause_poll = False
+        if model_name == "ColumnsControlModel":
+            # FreeCAD ControlColumnResultWidget.row_clicked → etabs.view.show_frame
+            cell_selected = self._columns_control_selection_handler(result.kwargs)
+            pause_poll = True
 
         # Build DataFrame
         if result.dataframe is not None:
@@ -309,18 +330,65 @@ class MainWindow(QMainWindow):
         widget = ResultWidget(
             df=df,
             model_class=model_class,
+            delegate_class=delegate_class,
+            legend_items=legend_items,
+            sortable=model_name != "ColumnsControlModel",
+            cell_selected=cell_selected,
             title=result.title,
             summary=result.summary,
             ok=result.ok,
             parent=self._tabs,
             kwargs=result.kwargs if result.kwargs else None,
         )
+        widget._pause_etabs_poll = pause_poll  # type: ignore[attr-defined]
 
         # Set tab icon from command
         cmd_icon_name = COMMAND_ICONS.get(getattr(cmd_class, 'command_id', ''), '')
         tab_icon = icon(cmd_icon_name) if cmd_icon_name else QIcon()
         idx = self._tabs.addTab(widget, tab_icon, result.title)
         self._tabs.setCurrentIndex(idx)
+        self._sync_poll_with_current_tab(idx)
+
+    def _sync_poll_with_current_tab(self, index: int) -> None:
+        """Stop background COM polling while Columns Control is active."""
+        widget = self._tabs.widget(index) if index >= 0 else None
+        pause = bool(getattr(widget, "_pause_etabs_poll", False))
+        if pause:
+            self._poll_timer.stop()
+            self._poll_busy = False
+        elif self._conn.is_connected and not self._poll_timer.isActive():
+            self._poll_timer.start()
+
+    def _columns_control_selection_handler(self, kwargs: dict):
+        """Select the clicked frame in ETABS (no RefreshView — that freezes UI)."""
+        etabs = kwargs.get("etabs")
+        names_df = kwargs.get("columns_type_names_df")
+        if etabs is None or names_df is None:
+            return None
+
+        last_name: list[str | None] = [None]
+
+        def show_frame(row: int, col: int):
+            try:
+                frame_name = names_df.iat[row, col]
+            except Exception:
+                return
+            if pd.isna(frame_name) or frame_name == "":
+                return
+            name = str(frame_name)
+            if last_name[0] == name:
+                return
+            last_name[0] = name
+            # Keep COM on the UI/STA thread. Skip RefreshView — it is the main
+            # freeze source when ETABS is busy; SetSelected still highlights.
+            try:
+                sap = etabs.SapModel
+                sap.SelectObj.ClearSelection()
+                sap.FrameObj.SetSelected(name, True)
+            except Exception:
+                pass
+
+        return show_frame
 
     # ── ETABS connection ────────────────────────────────────────────
 

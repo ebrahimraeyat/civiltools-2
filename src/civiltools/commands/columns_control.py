@@ -101,5 +101,6 @@ class ColumnsControlCheck(BaseCommand):
                 'section_areas': section_areas,
                 'columns_type_names_df': columns_type_names_df,
                 'comparison_results': comparison_results,
+                'etabs': etabs,
             },
         )
