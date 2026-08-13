@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
-from PySide6.QtCore import Qt, QSortFilterProxyModel, QRegularExpression, Signal, QTimer
+from PySide6.QtCore import QEvent, Qt, QSortFilterProxyModel, QRegularExpression, Signal, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -146,6 +146,7 @@ class ResultWidget(QWidget):
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._table.setModel(self._proxy)
+        self._table.viewport().installEventFilter(self)
         if delegate_class is not None:
             # Match FreeCAD ControlColumnResultWidget: custom delegate, no sorting.
             self._table.setItemDelegate(delegate_class(self._table))
@@ -290,6 +291,20 @@ class ResultWidget(QWidget):
         row, col = self._pending_cell
         self._pending_cell = None
         self._cell_selected(row, col)
+
+    def eventFilter(self, watched, event):
+        if (
+            watched is self._table.viewport()
+            and event.type() == QEvent.Type.MouseButtonRelease
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self._refresh_from_etabs(0, 0)
+        return super().eventFilter(watched, event)
+
+    def _refresh_from_etabs(self, row: int, col: int) -> None:
+        refresh_from_etabs = getattr(self._model, "refresh_from_etabs", None)
+        if refresh_from_etabs is not None:
+            refresh_from_etabs(row, col)
 
     # ── Filter slots ────────────────────────────────────────────────
 

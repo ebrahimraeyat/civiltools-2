@@ -477,6 +477,42 @@ class ColumnsControlModel(PandasModel):
         except Exception:
             return 'not_checked'
 
+    def refresh_from_etabs(self, _row: int, _col: int) -> bool:
+        """Synchronize every displayed column section and comparison from ETABS."""
+        if self._etabs is None or not self.rowCount() or not self.columnCount():
+            return False
+
+        sections_by_frame: dict[str, str] = {}
+        for row in range(self._names_df.shape[0]):
+            for col in range(self._names_df.shape[1]):
+                frame_name = self._names_df.iat[row, col]
+                if pd.isna(frame_name) or frame_name == '':
+                    self.df.iat[row, col] = ''
+                    continue
+
+                frame_name = str(frame_name)
+                if frame_name not in sections_by_frame:
+                    try:
+                        sections_by_frame[frame_name] = (
+                            self._etabs.SapModel.FrameObj.GetSection(frame_name)[0] or ''
+                        )
+                    except Exception:
+                        sections_by_frame[frame_name] = str(self.df.iat[row, col] or '')
+                self.df.iat[row, col] = sections_by_frame[frame_name]
+
+        for row in range(self._names_df.shape[0]):
+            for col in range(self._names_df.shape[1]):
+                row_label = self.df.index[row]
+                col_name = self.df.columns[col]
+                self._comparison[(row_label, col_name)] = self._compare_result(row, col)
+
+        self.dataChanged.emit(
+            self.index(0, 0),
+            self.index(self.rowCount() - 1, self.columnCount() - 1),
+            [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.BackgroundRole],
+        )
+        return True
+
     def flags(self, index: QModelIndex):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
