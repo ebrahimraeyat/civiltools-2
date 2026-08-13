@@ -18,6 +18,22 @@ from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 
+_METHOD_LABELS = {
+    "2800": "2800",
+    "modal": "Modal",
+    "earthquake": "Earthquake (Ex, Ey)",
+    "file": "File",
+}
+
+
+def _method_title(prefix: str, way: str) -> str:
+    return f"{prefix} - {_METHOD_LABELS.get(way, way)}"
+
+
+def _button_checked(ui, name: str) -> bool:
+    button = getattr(ui, name, None)
+    return bool(button and button.isChecked())
+
 
 class StoryStiffnessDialog(QDialog):
     """Compute story stiffness from ETABS and cache results."""
@@ -36,7 +52,8 @@ class StoryStiffnessDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.ui)
-        self.setWindowTitle("Story Stiffness")
+        self._connect_method_buttons()
+        self._update_window_title()
         self.resize(self.ui.size())
         set_dialog_icon(self, "stiffness.svg")
 
@@ -44,18 +61,29 @@ class StoryStiffnessDialog(QDialog):
         if run_btn:
             run_btn.clicked.connect(self._run)
 
+    def _connect_method_buttons(self):
+        for name in (
+            "radio_button_2800",
+            "radio_button_modal",
+            "radio_button_earthquake",
+        ):
+            button = getattr(self.ui, name, None)
+            if button:
+                button.toggled.connect(self._update_window_title)
+
+    def _selected_way(self) -> str:
+        if _button_checked(self.ui, "radio_button_2800"):
+            return "2800"
+        if _button_checked(self.ui, "radio_button_modal"):
+            return "modal"
+        return "earthquake"
+
+    def _update_window_title(self):
+        self.setWindowTitle(_method_title("Story Stiffness", self._selected_way()))
+
     def _run(self):
         # Determine method from radio buttons
-        way = "force"
-        rb_2800 = getattr(self.ui, "radio_button_2800", None)
-        rb_eq = getattr(self.ui, "radio_button_earthquake", None)
-        rb_modal = getattr(self.ui, "radio_button_modal", None)
-        if rb_2800 and rb_2800.isChecked():
-            way = "2800"
-        elif rb_eq and rb_eq.isChecked():
-            way = "earthquake"
-        elif rb_modal and rb_modal.isChecked():
-            way = "modal"
+        way = self._selected_way()
 
         try:
             rows, headers = self._etabs.get_story_stiffness_table(way=way)
@@ -75,7 +103,7 @@ class StoryStiffnessDialog(QDialog):
             pass
 
         self._result = CommandResult(
-            title="Story Stiffness",
+            title=self.windowTitle(),
             dataframe=df,
             ok=True,
             summary=f"Story stiffness computed via {way} method.",
@@ -104,13 +132,37 @@ class ShowStoryStiffnessDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.ui)
-        self.setWindowTitle("Show Story Stiffness")
+        self._connect_method_buttons()
+        self._update_window_title()
         self.resize(self.ui.size())
         set_dialog_icon(self, "show_stiffness.svg")
 
         run_btn = getattr(self.ui, "run", None)
         if run_btn:
             run_btn.clicked.connect(self._run)
+
+    def _connect_method_buttons(self):
+        for name in (
+            "radio_button_2800",
+            "radio_button_modal",
+            "radio_button_earthquake",
+            "radio_button_file",
+        ):
+            button = getattr(self.ui, name, None)
+            if button:
+                button.toggled.connect(self._update_window_title)
+
+    def _selected_way(self) -> str:
+        if _button_checked(self.ui, "radio_button_file"):
+            return "file"
+        if _button_checked(self.ui, "radio_button_2800"):
+            return "2800"
+        if _button_checked(self.ui, "radio_button_modal"):
+            return "modal"
+        return "earthquake"
+
+    def _update_window_title(self):
+        self.setWindowTitle(_method_title("Show Story Stiffness", self._selected_way()))
 
     def _run(self):
         import pandas as pd
@@ -127,7 +179,7 @@ class ShowStoryStiffnessDialog(QDialog):
             return
 
         self._result = CommandResult(
-            title="Story Stiffness (Cached)",
+            title=self.windowTitle(),
             dataframe=df,
             ok=True,
             summary="Loaded from cached analysis.",
