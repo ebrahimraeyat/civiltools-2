@@ -1,7 +1,9 @@
 """Story stiffness commands — compute and show story stiffness."""
 
 from __future__ import annotations
+
 from typing import Any
+
 from civiltools.commands.base import BaseCommand, CommandResult
 from civiltools.commands import register
 
@@ -12,6 +14,7 @@ class StoryStiffnessCommand(BaseCommand):
     label = "Story Stiffness"
     menu_path = "Control"
     tooltip = "Compute story stiffness and save to cache"
+    table_model = "StoryStiffnessModel"
     dialog_class = "civiltools.gui.dialogs.story_stiffness_dialog.StoryStiffnessDialog"
 
     @classmethod
@@ -25,6 +28,7 @@ class ShowStoryStiffnessCommand(BaseCommand):
     label = "Show Story Stiffness"
     menu_path = "Control"
     tooltip = "Display cached story stiffness results"
+    table_model = "StoryStiffnessModel"
     dialog_class = "civiltools.gui.dialogs.story_stiffness_dialog.ShowStoryStiffnessDialog"
 
     @classmethod

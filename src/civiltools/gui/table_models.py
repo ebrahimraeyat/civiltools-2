@@ -250,6 +250,80 @@ class IrregularityOfMassModel(PandasModel):
 
 
 # =====================================================================
+#  Story Stiffness Model
+# =====================================================================
+
+class StoryStiffnessModel(PandasModel):
+    """Story stiffness values and ratio checks with legacy formatting."""
+
+    def __init__(self, df: pd.DataFrame, kwargs=None):
+        super().__init__(df.copy(), kwargs)
+        headers = list(self.df.columns)
+        self.i_kx = headers.index('Kx')
+        self.i_ky = headers.index('Ky')
+        self.i_kx_above = headers.index('Kx / kx+1')
+        self.i_ky_above = headers.index('Ky / ky+1')
+        self.i_kx_3above = headers.index('Kx / kx_3ave')
+        self.i_ky_3above = headers.index('Ky / ky_3ave')
+
+    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        row, col = index.row(), index.column()
+        value = self.df.iat[row, col]
+
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if self.data(index, Qt.ItemDataRole.BackgroundRole) is not None:
+                return QColor(0, 0, 0)
+            return None
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            if col in (
+                self.i_kx_above,
+                self.i_ky_above,
+                self.i_kx_3above,
+                self.i_ky_3above,
+            ):
+                if value == '-':
+                    return value
+                try:
+                    return f'{float(value):.3f}'
+                except (ValueError, TypeError):
+                    return str(value)
+            if col in (self.i_kx, self.i_ky):
+                try:
+                    return f'{float(value):.0f}'
+                except (ValueError, TypeError):
+                    return str(value)
+            return str(value)
+
+        if role == Qt.ItemDataRole.BackgroundRole:
+            if col in (self.i_kx_above, self.i_ky_above):
+                return self._ratio_color(value, 0.6, 0.7)
+            if col in (self.i_kx_3above, self.i_ky_3above):
+                return self._ratio_color(value, 0.7, 0.8)
+            return None
+
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+        return None
+
+    @staticmethod
+    def _ratio_color(value, warning_limit, pass_limit):
+        if value == '-':
+            return None
+        try:
+            ratio = float(value)
+        except (ValueError, TypeError):
+            return None
+        if ratio < warning_limit:
+            return QColor(*HIGH)
+        if ratio < pass_limit:
+            return QColor(*INTERMEDIATE)
+        return QColor(*LOW)
+
+
+# =====================================================================
 #  Drift Model
 # =====================================================================
 

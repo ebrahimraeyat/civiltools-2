@@ -155,6 +155,7 @@ _MODEL_MAP: dict[str, type] = {
     "PandasModel": table_models.PandasModel,
     "TorsionModel": table_models.TorsionModel,
     "IrregularityOfMassModel": table_models.IrregularityOfMassModel,
+    "StoryStiffnessModel": table_models.StoryStiffnessModel,
     "DriftModel": table_models.DriftModel,
     "BaseShearModel": table_models.BaseShearModel,
     "JointShearBCCModel": table_models.JointShearBCCModel,

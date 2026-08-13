@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 from PySide6.QtCore import QFile
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox, QVBoxLayout
 
 from civiltools.commands.base import CommandResult
 from civiltools.gui.helpers import set_dialog_icon
@@ -57,7 +58,8 @@ class StoryStiffnessDialog(QDialog):
             way = "modal"
 
         try:
-            df = self._etabs.get_story_stiffness_table(way=way)
+            rows, headers = self._etabs.get_story_stiffness_table(way=way)
+            df = pd.DataFrame(rows, columns=headers)
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
             return
@@ -65,7 +67,10 @@ class StoryStiffnessDialog(QDialog):
         # Cache to JSON
         try:
             json_name = f"StoryStiffness {self._etabs.get_file_name_without_suffix()}"
-            self._etabs.save_to_json_in_edb_folder(json_name, df.to_dict())
+            self._etabs.save_to_json_in_edb_folder(
+                json_name,
+                {"columns": list(df.columns), "rows": df.values.tolist()},
+            )
         except Exception:
             pass
 
@@ -112,7 +117,10 @@ class ShowStoryStiffnessDialog(QDialog):
         try:
             json_name = f"StoryStiffness {self._etabs.get_file_name_without_suffix()}"
             data = self._etabs.load_from_json_in_edb_folder(json_name)
-            df = pd.DataFrame(data)
+            if isinstance(data, dict) and {"columns", "rows"} <= data.keys():
+                df = pd.DataFrame(data["rows"], columns=data["columns"])
+            else:
+                df = pd.DataFrame(data)
         except Exception as exc:
             QMessageBox.critical(self, "Error",
                                  f"No cached stiffness data:\n{exc}")
