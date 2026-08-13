@@ -16,16 +16,148 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
-from PySide6.QtCore import QEvent, Qt, QSortFilterProxyModel, QRegularExpression, Signal, QTimer
+from PySide6 import QtCore
+from PySide6.QtCore import QEvent, Qt, QRegularExpression, Signal, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QCheckBox, QTableView, QHeaderView,
     QFileDialog, QMessageBox, QApplication, QSplitter, QTextEdit, QFrame,
-    QAbstractItemView,
+    QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QWidgetAction,
 )
 
 from civiltools.gui.table_models import PandasModel
+
+
+class HeaderFilterListWidget(QListWidget):
+    """List widget with drag select/deselect and single-click activation."""
+
+    single_item_activated = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._press_row: int | None = None
+        self._last_row: int | None = None
+        self._drag_select_state = True
+        self._did_drag = False
+        self._press_modifiers = Qt.KeyboardModifier.NoModifier
+        self._pending_single_collapse = False
+
+    def _row_at(self, position) -> int:
+        item = self.itemAt(position)
+        if item is None:
+            return -1
+        return self.row(item)
+
+    def _apply_range_state(self, start_row: int, end_row: int, selected: bool) -> None:
+        for row in range(min(start_row, end_row), max(start_row, end_row) + 1):
+            item = self.item(row)
+            if item is not None:
+                item.setSelected(selected)
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+
+        self._press_modifiers = event.modifiers()
+        if self._press_modifiers & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+        ):
+            super().mousePressEvent(event)
+            return
+
+        press_row = self._row_at(event.position().toPoint())
+        if press_row < 0:
+            self.clearSelection()
+            self._press_row = None
+            self._last_row = None
+            self._did_drag = False
+            super().mousePressEvent(event)
+            return
+
+        self._press_row = press_row
+        self._last_row = press_row
+        self._did_drag = False
+        self._pending_single_collapse = False
+
+        item = self.item(press_row)
+        if item.isSelected() and len(self.selectedIndexes()) > 1:
+            self._pending_single_collapse = True
+            self._drag_select_state = False
+        else:
+            self._drag_select_state = True
+            self.clearSelection()
+            item.setSelected(True)
+
+        self.setCurrentRow(press_row)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if (
+            self._press_row is None
+            or not (event.buttons() & Qt.MouseButton.LeftButton)
+            or self._press_modifiers
+            & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+        ):
+            super().mouseMoveEvent(event)
+            return
+
+        move_row = self._row_at(event.position().toPoint())
+        if move_row < 0:
+            super().mouseMoveEvent(event)
+            return
+
+        if self._last_row is None:
+            self._last_row = self._press_row
+        if move_row != self._last_row:
+            if self._pending_single_collapse:
+                self._pending_single_collapse = False
+            self._apply_range_state(self._last_row, move_row, self._drag_select_state)
+            self._did_drag = True
+            self._last_row = move_row
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+
+        if self._press_row is None:
+            super().mouseReleaseEvent(event)
+            return
+
+        selected_value = None
+        if self._pending_single_collapse:
+            self.clearSelection()
+            item = self.item(self._press_row)
+            if item is not None:
+                item.setSelected(True)
+                self.setCurrentRow(self._press_row)
+
+        should_auto_apply = (
+            not self._did_drag
+            and not (
+                self._press_modifiers
+                & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+            )
+            and len(self.selectedItems()) == 1
+        )
+        if should_auto_apply:
+            selected_value = self.selectedItems()[0].data(Qt.ItemDataRole.UserRole)
+
+        self._press_row = None
+        self._last_row = None
+        self._did_drag = False
+        self._press_modifiers = Qt.KeyboardModifier.NoModifier
+        self._pending_single_collapse = False
+        event.accept()
+
+        if selected_value is not None:
+            self.single_item_activated.emit(str(selected_value))
 
 
 class ResultWidget(QWidget):
@@ -142,7 +274,7 @@ class ResultWidget(QWidget):
 
         # ── Model + Proxy ───────────────────────────────────────────
         self._model = model_class(df, kwargs)
-        self._proxy = QSortFilterProxyModel(self)
+        self._proxy = ColumnValueFilterProxyModel(self)
         self._proxy.setSourceModel(self._model)
         self._proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._table.setModel(self._proxy)
@@ -161,6 +293,8 @@ class ResultWidget(QWidget):
             QHeaderView.ResizeMode.Interactive
         )
         header.setStretchLastSection(False)
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._show_header_filter_menu)
         self._table.resizeColumnsToContents()
         if self._model.columnCount():
             last_column = self._model.columnCount() - 1
@@ -169,15 +303,15 @@ class ResultWidget(QWidget):
             )
 
         # Populate column combo (skip hidden system columns)
-        for col_name in self._model.df.columns:
+        for source_column, col_name in enumerate(self._model.df.columns):
             if not str(col_name).startswith("__"):
-                self._col_combo.addItem(str(col_name))
+                self._col_combo.addItem(str(col_name), source_column)
 
         # Hide any __ system columns from the visible table
-        for col_name in self._model.df.columns:
-            if str(col_name).startswith("__"):
-                idx = self._model.df.columns.get_loc(col_name)
-                self._table.setColumnHidden(idx, True)
+        for source_column, col_name in enumerate(self._model.df.columns):
+            if not str(col_name).startswith("__"):
+                continue
+            self._table.setColumnHidden(source_column, True)
 
         # If a __detail__ column exists: show detail pane
         self._detail_col = "__detail__"
@@ -315,7 +449,118 @@ class ResultWidget(QWidget):
         self._proxy.setFilterRegularExpression(regex)
 
     def _on_col_changed(self, index: int):
-        self._proxy.setFilterKeyColumn(index)
+        source_column = self._col_combo.itemData(index)
+        if source_column is not None:
+            self._proxy.setFilterKeyColumn(source_column)
+
+    @staticmethod
+    def _collect_unique_header_values(source_model, column: int) -> list[str]:
+        values = set()
+        for row in range(source_model.rowCount()):
+            index = source_model.index(row, column)
+            value = source_model.data(index, Qt.ItemDataRole.DisplayRole)
+            values.add("" if value is None else str(value).strip())
+        return sorted(values, key=lambda item: (item == "", item.lower()))
+
+    def _show_header_filter_menu(self, pos) -> None:
+        """Show a multi-value filter for the column under the table header."""
+        header = self._table.horizontalHeader()
+        column = header.logicalIndexAt(pos)
+        if column < 0 or self._table.isColumnHidden(column):
+            return
+
+        source_model = self._proxy.sourceModel()
+        if source_model is None:
+            return
+
+        column_title = source_model.headerData(
+            column, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole
+        )
+        if column_title is None or str(column_title).startswith("__"):
+            return
+
+        unique_values = self._collect_unique_header_values(source_model, column)
+        active_values = self._proxy.get_column_filter_values(column)
+
+        menu = QMenu(self._table)
+        title_action = menu.addAction(f"Filter: {column_title}")
+        title_action.setEnabled(False)
+
+        if not unique_values:
+            empty_action = menu.addAction("(No values)")
+            empty_action.setEnabled(False)
+        else:
+            filter_widget = QWidget(menu)
+            filter_layout = QVBoxLayout(filter_widget)
+            filter_layout.setContentsMargins(8, 6, 8, 6)
+            filter_layout.setSpacing(6)
+
+            value_list = HeaderFilterListWidget(filter_widget)
+            for value in unique_values:
+                item = QListWidgetItem("{blanks}" if value == "" else value)
+                item.setData(Qt.ItemDataRole.UserRole, value)
+                value_list.addItem(item)
+                if value in active_values:
+                    item.setSelected(True)
+
+            row_height = value_list.sizeHintForRow(0) if value_list.count() else 20
+            visible_rows = min(max(4, value_list.count()), 8)
+            value_list.setFixedHeight((row_height * visible_rows) + 8)
+
+            apply_button = QPushButton("Apply Multiple Item Filter", filter_widget)
+
+            def apply_single_value(selected_value: str) -> None:
+                self._proxy.set_column_filter_values(column, {selected_value})
+
+            def apply_selected_values() -> None:
+                selected_values = {
+                    str(item.data(Qt.ItemDataRole.UserRole))
+                    for item in value_list.selectedItems()
+                }
+                if not selected_values or selected_values == set(unique_values):
+                    self._proxy.clear_column_filter(column)
+                else:
+                    self._proxy.set_column_filter_values(column, selected_values)
+
+            value_list.single_item_activated.connect(apply_single_value)
+            apply_button.clicked.connect(apply_selected_values)
+            filter_layout.addWidget(value_list)
+            filter_layout.addWidget(apply_button)
+
+            widget_action = QWidgetAction(menu)
+            widget_action.setDefaultWidget(filter_widget)
+            menu.addAction(widget_action)
+
+            non_blank_values = {value for value in unique_values if value}
+            if non_blank_values:
+                menu.addSeparator()
+                non_blank_action = menu.addAction("{Non-blanks}")
+                non_blank_action.triggered.connect(
+                    lambda: self._proxy.set_column_filter_values(column, non_blank_values)
+                )
+
+        menu.addSeparator()
+        clear_filter_action = menu.addAction("Clear Filter")
+        clear_filter_action.triggered.connect(
+            lambda: self._proxy.clear_column_filter(column)
+        )
+        clear_all_action = menu.addAction("Clear All Filters")
+        clear_all_action.triggered.connect(self._proxy.clear_all_column_filters)
+
+        menu.addSeparator()
+        sort_ascending_action = menu.addAction("Sort Ascending")
+        sort_ascending_action.triggered.connect(
+            lambda: self._table.sortByColumn(column, Qt.SortOrder.AscendingOrder)
+        )
+        sort_descending_action = menu.addAction("Sort Descending")
+        sort_descending_action.triggered.connect(
+            lambda: self._table.sortByColumn(column, Qt.SortOrder.DescendingOrder)
+        )
+        clear_sort_action = menu.addAction("Clear Sort")
+        clear_sort_action.triggered.connect(
+            lambda: header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        )
+        menu.exec(header.mapToGlobal(pos))
 
     # ── Export: Excel ───────────────────────────────────────────────
 
@@ -442,3 +687,57 @@ class ResultWidget(QWidget):
         Path(filepath).write_text(
             json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8"
         )
+
+
+class ColumnValueFilterProxyModel(QtCore.QSortFilterProxyModel):
+    """Filter rows by allowed display values on one or more columns."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._column_filters: dict[int, set[str]] = {}
+
+    @staticmethod
+    def _normalize_value(value) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def set_column_filter_values(self, column: int, allowed_values: set[str] | list[str]) -> None:
+        normalized = {
+            self._normalize_value(value)
+            for value in allowed_values
+        }
+        if normalized:
+            self._column_filters[column] = normalized
+        else:
+            self._column_filters.pop(column, None)
+        self.invalidateFilter()
+
+    def get_column_filter_values(self, column: int) -> set[str]:
+        return set(self._column_filters.get(column, set()))
+
+    def clear_column_filter(self, column: int) -> None:
+        if column in self._column_filters:
+            del self._column_filters[column]
+            self.invalidateFilter()
+
+    def clear_all_column_filters(self) -> None:
+        if not self._column_filters:
+            return
+        self._column_filters.clear()
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        if not super().filterAcceptsRow(source_row, source_parent):
+            return False
+        model = self.sourceModel()
+        if model is None:
+            return True
+        for column, allowed_values in self._column_filters.items():
+            index = model.index(source_row, column, source_parent)
+            value = self._normalize_value(
+                model.data(index, Qt.ItemDataRole.DisplayRole)
+            )
+            if value not in allowed_values:
+                return False
+        return True
