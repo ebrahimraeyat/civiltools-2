@@ -11,26 +11,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QFile
+from PySide6.QtCore import QFile, Qt
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox, QVBoxLayout
 
-from civiltools.etabs.config import get_settings_from_etabs
 from civiltools.commands.base import CommandResult
+from civiltools.etabs import config
 from civiltools.gui.busy_dialog import BusyDialog
 from civiltools.gui.helpers import set_dialog_icon
 
 _UI_DIR = Path(__file__).resolve().parent.parent / "ui"
-
-
-def _fill_checked_list(lw, names):
-    """Add checkable items to a QListWidget."""
-    lw.clear()
-    lw.addItems([n for n in names if n])
-    for i in range(lw.count()):
-        item = lw.item(i)
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(Qt.CheckState.Checked)
 
 
 def _get_checked_items(lw) -> list[str]:
@@ -40,17 +30,6 @@ def _get_checked_items(lw) -> list[str]:
         for i in range(lw.count())
         if lw.item(i).checkState() == Qt.CheckState.Checked
     ]
-
-
-def _safe_fill_combo(combo, items, d, key):
-    """Fill combobox and restore saved selection using getattr (not exec)."""
-    combo.clear()
-    combo.addItems(list(items))
-    saved = d.get(key, "")
-    if saved:
-        idx = combo.findText(saved)
-        if idx >= 0:
-            combo.setCurrentIndex(idx)
 
 
 class ResponseSpectrumDialog(QDialog):
@@ -76,7 +55,7 @@ class ResponseSpectrumDialog(QDialog):
         set_dialog_icon(self, "spectral.svg")
 
         # Config
-        self._d = get_settings_from_etabs(self._etabs)
+        self._d = config.get_settings_from_etabs(self._etabs)
 
         # Populate
         self._populate()
@@ -93,50 +72,10 @@ class ResponseSpectrumDialog(QDialog):
     # ── populate ────────────────────────────────────────────────────
 
     def _populate(self):
-        d = self._d
-        two_sys = d.get("activate_second_system", False)
-
-        # Dynamic loadcase lists (Main Loadcase tab)
-        try:
-            sx, sxe, sy, sye = self._etabs.get_dynamic_loadcases(d)
-            _fill_checked_list(self.ui.x_dynamic_loadcase_list, [sx, sxe])
-            _fill_checked_list(self.ui.y_dynamic_loadcase_list, [sy, sye])
-        except Exception:
-            pass
-
-        # Dynamic drift loadcase lists (Drift Loadcase tab)
-        try:
-            sx, sxe, sy, sye = self._etabs.get_dynamic_drift_loadcases(d)
-            _fill_checked_list(
-                self.ui.x_dynamic_drift_loadcase_list, [sx, sxe]
-            )
-            _fill_checked_list(
-                self.ui.y_dynamic_drift_loadcase_list, [sy, sye]
-            )
-        except Exception:
-            pass
-
-        # EX/EY comboboxes — fill from response spectrum load cases
-        try:
-            sx, sxe, sy, sye = (
-                self._etabs.load_cases
-                .get_response_spectrum_sxye_loadcases_names()
-            )
-            all_rs = sx.union(sxe).union(sy).union(sye)
-
-            _safe_fill_combo(self.ui.ex_combobox, sx, d, "ex_combobox")
-            _safe_fill_combo(self.ui.ey_combobox, sy, d, "ey_combobox")
-            _safe_fill_combo(
-                self.ui.ex_drift_combobox, sx, d, "ex_drift_combobox"
-            )
-            _safe_fill_combo(
-                self.ui.ey_drift_combobox, sy, d, "ey_drift_combobox"
-            )
-        except Exception:
-            pass
+        config.load(self._etabs, self.ui, self._d)
 
         # Disable second-system comboboxes if not active
-        if not two_sys:
+        if not self._d.get("activate_second_system", False):
             for name in (
                 "ex1_combobox", "ey1_combobox",
                 "ex1_drift_combobox", "ey1_drift_combobox",

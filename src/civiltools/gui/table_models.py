@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel
 from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import QComboBox, QStyledItemDelegate
 
 
 # ── Color defaults (RGB tuples, matching FreeCAD civilTools) ─────────
@@ -58,6 +59,91 @@ class PandasModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         return None
+
+
+class AngularSpectrumModel(QAbstractTableModel):
+    """Editable angle, response-spectrum, and section-cut table."""
+
+    HEADERS = ("Angle", "Response Spectrum", "Section Cut")
+
+    def __init__(self, angles, spectra, section_cuts, all_spectra):
+        super().__init__()
+        self._rows = [
+            [angle, str(spectrum), str(section_cut)]
+            for angle, spectrum, section_cut in zip(angles, spectra, section_cuts)
+        ]
+        self.spectra = tuple(dict.fromkeys(str(spectrum) for spectrum in all_spectra))
+        self.section_cuts = tuple(dict.fromkeys(str(section_cut) for section_cut in section_cuts))
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._rows)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        if orientation == Qt.Orientation.Horizontal:
+            return self.HEADERS[section]
+        return section + 1
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        value = self._rows[index.row()][index.column()]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return str(value)
+        if role == Qt.ItemDataRole.EditRole:
+            return value
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+        return None
+
+    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
+        if role != Qt.ItemDataRole.EditRole or not index.isValid() or index.column() == 0:
+            return False
+        self._rows[index.row()][index.column()] = str(value)
+        self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
+        return True
+
+    def flags(self, index):
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        if index.column() in (1, 2):
+            flags |= Qt.ItemFlag.ItemIsEditable
+        return flags
+
+    def choices_for_column(self, column: int) -> tuple[str, ...]:
+        if column == 1:
+            return self.spectra
+        if column == 2:
+            return self.section_cuts
+        return ()
+
+
+class AngularSpectrumDelegate(QStyledItemDelegate):
+    """Use combo-box editors for Angular response-spectrum selections."""
+
+    def createEditor(self, parent, option, index):
+        model = index.model()
+        if not isinstance(model, AngularSpectrumModel):
+            return None
+        choices = model.choices_for_column(index.column())
+        if not choices:
+            return None
+        editor = QComboBox(parent)
+        editor.addItems(choices)
+        return editor
+
+    def setEditorData(self, editor, index):
+        if isinstance(editor, QComboBox):
+            editor.setCurrentText(str(index.data(Qt.ItemDataRole.EditRole)))
+
+    def setModelData(self, editor, model, index):
+        if isinstance(editor, QComboBox):
+            model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
 
 # =====================================================================

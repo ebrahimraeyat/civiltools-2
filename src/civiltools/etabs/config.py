@@ -252,6 +252,7 @@ def load(etabs, widget=None, d=None, reverse=False, include_base=True):
     _fill_dynamic_lists(etabs, widget, d)
     _fill_dynamic_drift_lists(etabs, widget, d)
     _fill_angular_list(etabs, widget, d)
+    _fill_angular_table(etabs, widget, d)
 
     for key in (
         "ostan", "city", "risk_level", "soil_type", "importance_factor",
@@ -590,6 +591,41 @@ def _fill_angular_list(etabs, widget, d):
             item = lw.item(i)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
+
+
+def _fill_angular_table(etabs, widget, d):
+    table = getattr(widget, "angular_tableview", None)
+    if table is None:
+        return
+    try:
+        angles, section_cuts, spectra, all_spectra = (
+            etabs.load_cases.get_angular_response_spectrum_with_section_cuts()
+        )
+    except Exception:
+        return
+
+    spectra = list(spectra)
+    section_cuts = list(section_cuts)
+    saved_rows = d.get("angular_tableview", {})
+    for row, angle in enumerate(angles):
+        saved = next(
+            (
+                value
+                for saved_angle, value in saved_rows.items()
+                if float(saved_angle) == float(angle)
+            ),
+            None,
+        )
+        if not saved or len(saved) != 2:
+            continue
+        section_cut, spectrum = saved
+        section_cuts[row] = section_cut
+        spectra[row] = spectrum
+
+    from civiltools.gui.table_models import AngularSpectrumDelegate, AngularSpectrumModel
+
+    table.setModel(AngularSpectrumModel(angles, spectra, section_cuts, all_spectra))
+    table.setItemDelegate(AngularSpectrumDelegate(table))
 
 
 def _load_checkboxes(widget, d):
