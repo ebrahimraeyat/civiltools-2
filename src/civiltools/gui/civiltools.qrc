@@ -1,27 +1,31 @@
 <RCC>
-    <qresource prefix="/civiltools/images">
-        <file alias="100_30.svg">icons/100_30.svg</file>
-        <file alias="automatic.svg">icons/automatic.svg</file>
-        <file alias="beams.svg">icons/beams.svg</file>
-        <file alias="cancel.svg">icons/cancel.svg</file>
-        <file alias="columns.svg">icons/columns.svg</file>
-        <file alias="deflection.svg">icons/deflection.svg</file>
-        <file alias="earthquake.svg">icons/earthquake.svg</file>
-        <file alias="edit-clear.svg">icons/edit-clear.svg</file>
-        <file alias="etabs.png">icons/etabs.png</file>
-        <file alias="freecad.svg">icons/freecad.svg</file>
-        <file alias="help.png">icons/help.png</file>
-        <file alias="load_combinations.svg">icons/load_combinations.svg</file>
-        <file alias="mode_shapes.png">icons/mode_shapes.png</file>
-        <file alias="property_editor.svg">icons/property_editor.svg</file>
-        <file alias="refresh.svg">icons/refresh.svg</file>
-        <file alias="run.svg">icons/run.svg</file>
-        <file alias="save.png">icons/save.png</file>
-        <file alias="select-area-icon.svg">icons/select-area-icon.svg</file>
-        <file alias="shear.svg">icons/shear.svg</file>
-        <file alias="spectral.svg">icons/spectral.svg</file>
-        <file alias="tick.svg">icons/tick.svg</file>
-        <file alias="wall_load.svg">icons/wall_load.svg</file>
-        <file alias="word.svg">icons/word.svg</file>
-    </qresource>
+  <qresource prefix="/civiltools/images">
+    <file alias="100_30.svg">icons/100_30.svg</file>
+    <file alias="automatic.svg">icons/automatic.svg</file>
+    <file alias="beams.svg">icons/beams.svg</file>
+    <file alias="cancel.svg">icons/cancel.svg</file>
+    <file alias="columns.svg">icons/columns.svg</file>
+    <file alias="deflection.svg">icons/deflection.svg</file>
+    <file alias="earthquake.svg">icons/earthquake.svg</file>
+    <file alias="edit-clear.svg">icons/edit-clear.svg</file>
+    <file alias="etabs.png">icons/etabs.png</file>
+    <file alias="freecad.svg">icons/freecad.svg</file>
+    <file alias="help.png">icons/help.png</file>
+    <file alias="load_combinations.svg">icons/load_combinations.svg</file>
+    <file alias="mode_shapes.png">icons/mode_shapes.png</file>
+    <file alias="property_editor.svg">icons/property_editor.svg</file>
+    <file alias="refresh.svg">icons/refresh.svg</file>
+    <file alias="run.svg">icons/run.svg</file>
+    <file alias="save.png">icons/save.png</file>
+    <file alias="select-area-icon.svg">icons/select-area-icon.svg</file>
+    <file alias="shear.svg">icons/shear.svg</file>
+    <file alias="spectral.svg">icons/spectral.svg</file>
+    <file alias="tick.svg">icons/tick.svg</file>
+    <file alias="wall_load.svg">icons/wall_load.svg</file>
+    <file alias="word.svg">icons/word.svg</file>
+  </qresource>
+  <qresource prefix="control">
+    <file>icons/calculate_center_of_rigidity.jpeg</file>
+    <file>icons/2800.jpeg</file>
+  </qresource>
 </RCC>

@@ -25,6 +25,15 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
+echo  Compiling Qt resources ...
+call conda run -n civiltools pyside6-rcc "%~dp0src\civiltools\gui\civiltools.qrc" -o "%~dp0src\civiltools\gui\civiltools_rc.py"
+if %errorlevel% neq 0 (
+    echo.
+    echo  Failed to compile Qt resources.
+    pause
+    exit /b 1
+)
+
 echo  Starting civilTools ...
 echo.
 call conda run -n civiltools python -m civiltools

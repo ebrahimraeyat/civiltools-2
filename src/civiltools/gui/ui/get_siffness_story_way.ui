@@ -53,7 +53,7 @@
              <string/>
             </property>
             <property name="icon">
-             <iconset>
+             <iconset resource="../civiltools.qrc">
               <normaloff>:/civiltools/images/etabs.png</normaloff>:/civiltools/images/etabs.png</iconset>
             </property>
             <property name="iconSize">
@@ -79,7 +79,7 @@
              <string/>
             </property>
             <property name="icon">
-             <iconset>
+             <iconset resource="../civiltools.qrc">
               <normaloff>:/civiltools/images/mode_shapes.png</normaloff>:/civiltools/images/mode_shapes.png</iconset>
             </property>
             <property name="iconSize">
@@ -99,8 +99,8 @@
              <string/>
             </property>
             <property name="icon">
-             <iconset>
-              <normaloff>:/civiltools/images/2800.jpeg</normaloff>:/civiltools/images/2800.jpeg</iconset>
+             <iconset resource="../civiltools.qrc">
+              <normaloff>:/control/icons/2800.jpeg</normaloff>:/control/icons/2800.jpeg</iconset>
             </property>
             <property name="iconSize">
              <size>
@@ -119,7 +119,7 @@
              <string/>
             </property>
             <property name="icon">
-             <iconset>
+             <iconset resource="../civiltools.qrc">
               <normaloff>:/civiltools/images/run.svg</normaloff>:/civiltools/images/run.svg</iconset>
             </property>
             <property name="iconSize">
@@ -193,7 +193,7 @@ p, li { white-space: pre-wrap; }
         <string/>
        </property>
        <property name="pixmap">
-        <pixmap resource="../civiltools.qrc">:/civiltools/images/calculate_center_of_rigidity.jpeg</pixmap>
+        <pixmap resource="../civiltools.qrc">:/control/icons/calculate_center_of_rigidity.jpeg</pixmap>
        </property>
        <property name="scaledContents">
         <bool>false</bool>
@@ -207,6 +207,8 @@ p, li { white-space: pre-wrap; }
    </item>
   </layout>
  </widget>
+ <resources>
+  <include location="../civiltools.qrc"/>
+ </resources>
  <connections/>
 </ui>
-
