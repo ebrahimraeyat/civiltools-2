@@ -52,7 +52,7 @@ class ResponseSpectrumDialog(QDialog):
         layout.addWidget(self.ui)
         self.setWindowTitle("Response Spectrum Analysis")
         self.resize(self.ui.size())
-        set_dialog_icon(self, "spectral.svg")
+        set_dialog_icon(self, "balance.svg")
 
         # Config
         self._d = config.get_settings_from_etabs(self._etabs)

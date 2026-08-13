@@ -37,7 +37,7 @@ class EditFrameSectionsDialog(QDialog):
         layout.addWidget(self.ui)
         self.setWindowTitle("Edit Frame Section Properties")
         self.resize(self.ui.size())
-        set_dialog_icon(self, "frame_sections.svg")
+        set_dialog_icon(self, "property_editor.svg")
 
         run_btn = getattr(self.ui, "assign_pushbutton", None)
         if run_btn:

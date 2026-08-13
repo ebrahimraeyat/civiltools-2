@@ -44,9 +44,9 @@ COMMAND_ICONS: dict[str, str] = {
     "joint_shear": "joint_shear.svg",
     "design_columns": "run_concrete_design.svg",
     "columns_control": "columns_control.svg",
-    "dynamic_scale": "spectral.svg",
+    "dynamic_scale": "balance.svg",
     "settings": "settings.svg",
-    "edit_frame_sections": "frame_sections.svg",
+    "edit_frame_sections": "property_editor.svg",
     "aj_correction": "show_aj.svg",
     "live_load": "wall_load.svg",
     "get_weakness": "weakness.svg",
@@ -75,6 +75,7 @@ COMMAND_ICONS: dict[str, str] = {
     "extract_rebars": "rebars.svg",
     "copy_elements_between_models": "transfer_loads_between_two_files.svg",
     "controls_input": "checklist_pdf_control.svg",
+    "irregularity_of_mass": "mass.svg",
 }
 
 # Special icons for app-level use
