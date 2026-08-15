@@ -10,6 +10,7 @@ its internal relative imports work correctly.
 
 from __future__ import annotations
 
+import os
 import site
 import sys
 from pathlib import Path
@@ -31,19 +32,25 @@ _COM_CLASS: dict[str, str] = {
 
 
 def _get_etabs_api_path() -> Path:
-    """Get etabs_api path from default location."""
+    """Find etabs_api in an override, the installed package, or dev checkout."""
 
-    # Default path
-    default = Path(r"G:\etabs_api\src")
-    if default.exists():
-        return default
-    
-    # Fallback for other users
+    configured = os.environ.get("ETABS_API_PATH")
+    if configured:
+        candidate = Path(configured)
+        if candidate.exists():
+            return candidate
+
+    # Release installs get etabs_api from the GitHub dependency.
     sitepackages = site.getsitepackages()
     for sp in sitepackages:
         candidate = Path(sp) / "etabs_api"
         if candidate.exists():
             return candidate
+
+    # Keep the local checkout as a development fallback.
+    default = Path(r"G:\etabs_api\src")
+    if default.exists():
+        return default
     return Path()  # Not found
 
 class EtabsConnection:

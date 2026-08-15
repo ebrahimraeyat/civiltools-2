@@ -1,12 +1,13 @@
 ' ============================================================
-'  civilTools - Standalone Bootstrapper
+'  civilTools - One-Click VBScript Installer
 '  ============================================================
-'  Double-click this file on any Windows PC to:
+'  Double-click this .vbs file on any Windows PC to:
 '    1. Choose an install folder (Browse dialog)
 '    2. Clone the repository (or download as ZIP if Git missing)
-'    3. Run install.bat which handles everything else
+'    3. Run install.bat which handles the Conda-based setup
 '
-'  This file can be distributed independently (email, USB, etc.)
+'  No executable installer is required; this file can be distributed
+'  independently (email, USB, etc.)
 ' ============================================================
 
 Option Explicit

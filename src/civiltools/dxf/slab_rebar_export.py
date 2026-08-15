@@ -51,12 +51,20 @@ def export_slab_rebar_dxf(
     
     output_file = Path(output_file)
     
-    # Ensure rebars package is importable (lives at g:\etabs_api\rebars)
+    # Prefer the installed etabs_api dependency; keep local paths for development.
     import sys
     import importlib.util
+    import os
     import pathlib
+    import site
     if importlib.util.find_spec("rebars") is None:
-        for _candidate in [pathlib.Path(r"g:\etabs_api"), pathlib.Path(r"g:\etabs_api\src")]:
+        candidates = []
+        configured_path = os.environ.get("ETABS_API_PATH")
+        if configured_path:
+            candidates.append(pathlib.Path(configured_path).parent)
+        candidates.extend(pathlib.Path(sp) / "etabs_api" for sp in site.getsitepackages())
+        candidates.extend([pathlib.Path(r"g:\etabs_api"), pathlib.Path(r"g:\etabs_api\src")])
+        for _candidate in candidates:
             if (_candidate / "rebars" / "__init__.py").exists():
                 sys.path.insert(0, str(_candidate))
                 break

@@ -12,7 +12,7 @@ See [README.md](README.md) for install/build details. Don't duplicate that here.
 - Tests: `pytest`. Config in [pytest.ini](pytest.ini); `qt_api = pyside6`, tests live in [tests/](tests).
 - Lint/format: `ruff` — `line-length = 100`, target `py312`, rules `E,F,W,I,N,UP` (see [pyproject.toml](pyproject.toml)).
 - Builds: `python build/build_pyinstaller.py` (dev) or `python build/build_nuitka.py` (source-protected release).
-- `etabs-api` is an **external dependency** (git/local at `G:\etabs_api\src`), not part of this repo. ETABS commands need a *running* ETABS instance to execute.
+- `etabs-api` is an **external dependency** installed from `https://github.com/ebrahimraeyat/etabs_api2.git`; `G:\etabs_api\src` is only a local development fallback. ETABS commands need a *running* ETABS instance to execute.
 
 ## Architecture
 

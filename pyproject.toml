@@ -15,7 +15,7 @@ authors = [
 
 dependencies = [
     "comtypes>=1.4.9",
-    "etabs-api @ git+https://github.com/ebrahimraeyat/etabs_api.git",
+    "etabs-api @ git+https://github.com/ebrahimraeyat/etabs_api2.git",
     "pyside6>=6.10.1",
     "fpdf2>=2.8.0",
     "python-docx>=1.2.0",
@@ -48,7 +48,6 @@ dev = [
     "pyinstaller>=6.0",
     "ruff>=0.3",
     "markitdown[all]>=0.1",
-    "etabs_api @ file:///G:/etabs_api",
 ]
 
 [project.scripts]
