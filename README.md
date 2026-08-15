@@ -30,7 +30,7 @@ You do **not** need Python or Anaconda installed — everything is handled autom
 If you already have **Git** installed:
 
 ```powershell
-git clone --depth=1 https://github.com/ebrahimraeyat/civiltools.git
+git clone --depth=1 https://github.com/ebrahimraeyat/civiltools-2.git
 ```
 
 Then open the `civiltools` folder and **double-click `install.bat`**. It will:

@@ -16,8 +16,8 @@ Dim objShell, objFSO
 Set objShell = CreateObject("WScript.Shell")
 Set objFSO   = CreateObject("Scripting.FileSystemObject")
 
-Const REPO_URL = "https://github.com/ebrahimraeyat/civiltools.git"
-Const ZIP_URL  = "https://github.com/ebrahimraeyat/civiltools/archive/refs/heads/master.zip"
+Const REPO_URL = "https://github.com/ebrahimraeyat/civiltools-2.git"
+Const ZIP_URL  = "https://github.com/ebrahimraeyat/civiltools-2/archive/refs/heads/master.zip"
 Const FOLDER   = "civiltools"
 
 ' --- Choose install location (Browse dialog with text field) -----------
@@ -164,7 +164,7 @@ cloneOK = False
 
 If hasGit Then
     Dim cloneCmd
-    cloneCmd = "cmd /c cd /d """ & installDir & """ && git clone --depth=1 " & REPO_URL
+    cloneCmd = "cmd /c git clone --depth=1 " & REPO_URL & " """ & targetPath & """"
     Dim cloneResult
     cloneResult = objShell.Run(cloneCmd, 1, True)
     If cloneResult = 0 And objFSO.FolderExists(targetPath) Then
