@@ -21,6 +21,7 @@ from civiltools.report.data_extractor import (
     extract_report_data,
 )
 from civiltools.report.report_config import ReportConfig
+from civiltools.report.refresh import refresh_report_results
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +113,13 @@ class ReportGenerator:
             log.info("[%3d%%] %s", percent, message)
 
     def _generate(self) -> tuple[str, str]:
+        refresh_report_results(
+            self.etabs,
+            self.config,
+            progress=lambda percent, message: self._prog(
+                int(percent * 0.1), f"Refresh: {message}"
+            ),
+        )
         self._prog(0, "Phase 1 - Extracting data from ETABS...")
 
         def extraction_progress(percent: int, message: str) -> None:

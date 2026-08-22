@@ -29,6 +29,9 @@ class CommandResult:
     # Extra kwargs passed to the table model constructor
     kwargs: dict[str, Any] = field(default_factory=dict)
 
+    # Inputs captured for noninteractive report refreshes
+    params: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class CommandParam:

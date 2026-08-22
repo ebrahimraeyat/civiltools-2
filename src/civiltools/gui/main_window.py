@@ -372,6 +372,7 @@ class MainWindow(QMainWindow):
                 self._conn.model_path,
                 cmd_class.command_id,
                 result.title or cmd_class.label,
+                result.params,
             )
         except Exception as exc:
             app_log.warning(f"Could not cache {cmd_class.label} results: {exc}")
@@ -540,6 +541,7 @@ class MainWindow(QMainWindow):
                     )
                     self.statusBar().showMessage("Command failed")
                     return
+                result.params = user_params
         finally:
             self._poll_busy = False
 
@@ -573,9 +575,12 @@ class MainWindow(QMainWindow):
             # Some dialogs produce a secondary result (e.g. drift "Show Separate")
             result_y = getattr(dlg, "result_y", None)
             if result_y is not None:
+                result_y.params = getattr(dlg, "report_params", {})
                 self._add_result_tab(result_y, cmd_class)
 
             result = dlg.result
+            if result is not None:
+                result.params = getattr(dlg, "report_params", {})
             if result is None and self._tabs.count():
                 self._tabs.setCurrentIndex(0)
 

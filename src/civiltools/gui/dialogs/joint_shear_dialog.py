@@ -321,6 +321,11 @@ class JointShearDialog(QDialog):
         layout.addWidget(result_widget)
 
         self._result = CommandResult(title="Joint Shear", ok=all_ok, dataframe=df)
+        self._report_params = {
+            "structure_type": structure_type,
+            "show_js": mode != "software",
+            "show_bc": mode != "software",
+        }
 
     def _on_joint_selected(self, df_row: int):
         """Decode geometry from the selected row and update the plan widget."""
@@ -358,3 +363,7 @@ class JointShearDialog(QDialog):
     @property
     def result(self) -> CommandResult | None:
         return self._result
+
+    @property
+    def report_params(self) -> dict:
+        return getattr(self, "_report_params", {})

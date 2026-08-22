@@ -244,6 +244,11 @@ class DriftDialog(QDialog):
             )
             self._result_y = None
 
+        self._report_params = {
+            "no_story": no_of_stories,
+            "cdx": cdx,
+            "cdy": cdy,
+        }
         self.accept()
 
     def _get_load_cases(self, tab: int):
@@ -272,3 +277,7 @@ class DriftDialog(QDialog):
     def result_y(self) -> CommandResult | None:
         """Second result when Show Separate is checked."""
         return getattr(self, "_result_y", None)
+
+    @property
+    def report_params(self) -> dict:
+        return getattr(self, "_report_params", {})

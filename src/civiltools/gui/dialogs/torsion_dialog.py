@@ -131,8 +131,13 @@ class TorsionDialog(QDialog):
             ok=True,
             dataframe=df,
         )
+        self._report_params = {"loadcases": loadcases}
         self.accept()
 
     @property
     def result(self) -> CommandResult | None:
         return self._result
+
+    @property
+    def report_params(self) -> dict:
+        return getattr(self, "_report_params", {})

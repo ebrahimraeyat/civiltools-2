@@ -15,6 +15,7 @@ from pathlib import Path
 
 DEFAULT_SECTION_ORDER: list[str] = [
     "model_settings",
+    "project_info",
     "earthquake_formulation",
     "earthquake_values",
     "load_combinations",
@@ -23,6 +24,7 @@ DEFAULT_SECTION_ORDER: list[str] = [
     "torsion",
     "joint_shear",
     "pmm_columns",
+    "columns_100_30",
     "story_plans",
     "area_loads",
     "irregularities",
@@ -44,6 +46,7 @@ SECTION_NAMES: dict[str, dict[str, str]] = {
     "torsion":                 {"fa": "بی‌نظمی پیچشی", "en": "Torsional Irregularity"},
     "joint_shear":             {"fa": "برش در گره‌ها", "en": "Joint Shear Check"},
     "pmm_columns":             {"fa": "نتایج طراحی ستون‌ها", "en": "Column PMM Design Results"},
+    "columns_100_30":          {"fa": "کنترل 100-30 ستون‌ها", "en": "100%-30% Column Check"},
     "story_plans": {
         "fa": "پلان تیر و ستون طبقات",
         "en": "Story Plans — Beams & Columns",
@@ -53,6 +56,14 @@ SECTION_NAMES: dict[str, dict[str, str]] = {
     "design_results":          {"fa": "نتایج طراحی", "en": "Design Results"},
     "json_tables":             {"fa": "جداول نتایج", "en": "Result Tables"},
 }
+
+REFRESHABLE_SECTIONS: tuple[str, ...] = (
+    "drift",
+    "torsion",
+    "pmm_columns",
+    "joint_shear",
+    "columns_100_30",
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -68,6 +79,8 @@ class ReportConfig:
     section_order: list[str] = field(default_factory=lambda: list(DEFAULT_SECTION_ORDER))
     disabled_sections: list[str] = field(default_factory=list)
     json_table_order: list[str] = field(default_factory=list)  # explicit JSON table order
+    refresh_sections: list[str] = field(default_factory=list)
+    refresh_params: dict[str, dict] = field(default_factory=dict)
     page_size: str = "A4"                         # 'A4' or 'Letter'
     include_table_of_contents: bool = True
     include_page_numbers: bool = True

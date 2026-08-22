@@ -1,7 +1,7 @@
 """
-Report generation dialog — choose format, sections, output directory,
+Report generation dialog — choose sections and output directory,
 then run the ReportWorker (QThread + ProcessPoolExecutor) to generate
-Word and/or PDF reports with parallel image rendering.
+a DOCX report with parallel image rendering.
 """
 
 from __future__ import annotations
@@ -32,7 +32,11 @@ from PySide6.QtWidgets import (
 )
 
 from civiltools.gui.helpers import set_dialog_icon
-from civiltools.report.report_config import SECTION_NAMES, ReportConfig
+from civiltools.report.report_config import (
+    REFRESHABLE_SECTIONS,
+    SECTION_NAMES,
+    ReportConfig,
+)
 
 
 def _open_file(path: Path) -> None:
@@ -112,6 +116,33 @@ class ReportDialog(QDialog):
 
         layout.addWidget(opt_group)
 
+        # ── Cached/live result sources ─────────────────────────────
+        refresh_group = QGroupBox("Refresh Results from ETABS")
+        refresh_lay = QVBoxLayout(refresh_group)
+        refresh_buttons = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        clear_all_btn = QPushButton("Clear All")
+        select_all_btn.clicked.connect(lambda: self._set_refresh_checks(True))
+        clear_all_btn.clicked.connect(lambda: self._set_refresh_checks(False))
+        refresh_buttons.addWidget(select_all_btn)
+        refresh_buttons.addWidget(clear_all_btn)
+        refresh_buttons.addStretch()
+        refresh_lay.addLayout(refresh_buttons)
+
+        refresh_hint = QLabel(
+            "Checked = refresh from ETABS; unchecked = keep saved JSON tables."
+        )
+        refresh_hint.setWordWrap(True)
+        refresh_lay.addWidget(refresh_hint)
+
+        self._refresh_checks: dict[str, QCheckBox] = {}
+        for key in REFRESHABLE_SECTIONS:
+            label = SECTION_NAMES.get(key, {}).get("en", key)
+            check = QCheckBox(label)
+            self._refresh_checks[key] = check
+            refresh_lay.addWidget(check)
+        layout.addWidget(refresh_group)
+
         # ── Section list (checkable, drag-reorderable) ──────────────
         sec_group = QGroupBox("Report Sections (drag to reorder)")
         sec_lay = QVBoxLayout(sec_group)
@@ -190,10 +221,20 @@ class ReportDialog(QDialog):
                 disabled.append(key)
         config.section_order = active
         config.disabled_sections = disabled
+        config.refresh_sections = [
+            key for key, check in self._refresh_checks.items() if check.isChecked()
+        ]
 
         # Get building if not already provided
         if self._building is None:
             self._building = self._get_building()
+
+        try:
+            model_file = self._etabs.SapModel.GetModelFilename()
+            if model_file:
+                config.save(ReportConfig.default_config_path(model_file))
+        except Exception:
+            pass
 
         # Disable UI
         self._gen_btn.setEnabled(False)
@@ -256,6 +297,10 @@ class ReportDialog(QDialog):
             self, "Report Error",
             f"Report generation failed:\n\n{tb[:600]}",
         )
+
+    def _set_refresh_checks(self, checked: bool):
+        for check in self._refresh_checks.values():
+            check.setChecked(checked)
 
     # ── Building creation ───────────────────────────────────────────
 

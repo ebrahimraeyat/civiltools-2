@@ -73,7 +73,7 @@ def test_main_window_persists_only_connected_etabs_results(monkeypatch):
         window, Widget(), CommandResult(title="Torsion Check"), Command
     )
 
-    assert calls == [(Widget._model, "Tower.edb", "torsion", "Torsion Check")]
+    assert calls == [(Widget._model, "Tower.edb", "torsion", "Torsion Check", {})]
 
     Connection.is_connected = False
     MainWindow._persist_result_table(

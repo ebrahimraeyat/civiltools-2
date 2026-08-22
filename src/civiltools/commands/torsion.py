@@ -24,8 +24,13 @@ class TorsionCheck(BaseCommand):
 
     @classmethod
     def execute(cls, etabs, params: dict[str, Any] | None = None) -> CommandResult:
+        params = params or {}
         try:
-            df = etabs.get_diaphragm_max_over_avg_drifts()
+            loadcases = params.get("loadcases")
+            if loadcases:
+                df = etabs.get_diaphragm_max_over_avg_drifts(loadcases=loadcases)
+            else:
+                df = etabs.get_diaphragm_max_over_avg_drifts()
         except Exception as exc:
             return CommandResult(
                 title="Torsion Check",

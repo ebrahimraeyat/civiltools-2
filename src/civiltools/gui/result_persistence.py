@@ -55,6 +55,7 @@ def persist_result_table(
     model_path: str | Path,
     command_id: str,
     display_name: str,
+    params: dict[str, Any] | None = None,
 ) -> Path:
     """Save an ETABS command result and update its report manifest."""
     source = Path(model_path)
@@ -68,7 +69,58 @@ def persist_result_table(
         {"en": display_name, "fa": display_name},
         category="checks",
     )
+    if params:
+        save_refresh_params(results_dir, command_id, params)
     return output_path
+
+
+def save_refresh_params(
+    results_dir: str | Path,
+    command_id: str,
+    params: dict[str, Any],
+) -> Path:
+    """Save JSON-safe command inputs for later report refreshes."""
+    directory = Path(results_dir)
+    path = directory / "refresh_params.json"
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+    existing[command_id] = _json_safe(params)
+    path.write_text(
+        json.dumps(existing, indent=4, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return path
+
+
+def load_refresh_params(model_path: str | Path) -> dict[str, dict[str, Any]]:
+    """Load saved command inputs for the model associated with *model_path*."""
+    source = Path(model_path)
+    path = source.parent / f"{source.stem}_table_results" / "refresh_params.json"
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _display_text(value: Any) -> str:

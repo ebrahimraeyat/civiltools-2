@@ -7,7 +7,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pandas as pd
+from docx import Document
+
 from civiltools.report.data_extractor import ReportData
+from civiltools.report.docx_report import _section_columns_100_30
 from civiltools.report.latex_str import (
     earthquake_c_with_values,
     earthquake_formula,
@@ -96,6 +100,20 @@ class TestReportGenerator:
         assert Path(docx_path) == tmp_path / "Test_Building_report.docx"
         assert pdf_path == ""
         assert written_paths == [(data, generator.config, Path(docx_path))]
+
+
+def test_100_30_section_contains_clause_text_and_result():
+    data = ReportData(
+        columns_100_30_data=pd.DataFrame({"UniqueName": ["C1"], "Result": [False]})
+    )
+    doc = Document()
+
+    _section_columns_100_30(doc, data, "en")
+
+    text = "\n".join(paragraph.text for paragraph in doc.paragraphs)
+    assert "Clause 4-1-3" in text
+    assert "100%-30%" in text
+    assert "1 column(s) require" in text
 
 
 class TestLatexStr:

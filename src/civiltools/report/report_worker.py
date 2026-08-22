@@ -50,5 +50,5 @@ class ReportWorker(QThread):
         )
 
     def run(self):
-        docx_path, pdf_path = self._generator.generate()
-        self.finished.emit(docx_path, pdf_path)
+        docx_path, _unused_pdf_path = self._generator.generate()
+        self.finished.emit(docx_path, _unused_pdf_path)

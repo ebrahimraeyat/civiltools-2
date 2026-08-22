@@ -4,7 +4,7 @@ a live ETABS connection for report generation.
 
 All ETABS COM calls are sequential (COM is single-threaded).
 The returned ``ReportData`` contains everything needed to render
-both DOCX and PDF reports, including raw data for parallel image
+the DOCX report, including raw data for parallel image
 generation.
 
 Results for drift, torsion, PMM and joint shear are first looked up
@@ -88,6 +88,9 @@ class ReportData:
 
     # ── Joint shear check ─────────────────────────────────────────────
     joint_shear_data: pd.DataFrame | None = None
+
+    # ── 100%-30% orthogonal seismic combination check ────────────────
+    columns_100_30_data: pd.DataFrame | None = None
 
     # ── Frame geometry per story ──────────────────────────────────────
     frame_data: dict[str, list[FrameInfo]] = field(default_factory=dict)
@@ -178,6 +181,10 @@ def extract_report_data(
     # ── Joint shear (JSON only) ───────────────────────────────────────
     _prog(45, "Reading joint shear data…")
     _extract_joint_shear(data)
+
+    # ── 100%-30% column check (JSON only) ─────────────────────────────
+    _prog(48, "Reading 100%-30% column check…")
+    _extract_columns_100_30(data)
 
     # ── Frame geometry ────────────────────────────────────────────────
     _prog(50, "Reading frame geometry…")
@@ -443,7 +450,7 @@ def _extract_pmm(etabs, data: ReportData):
     """Column PMM design results — JSON first, then API fallback."""
     # NOTE: do NOT include 'column' as keyword — it would match columns_control.json
     # which contains section names instead of PMM ratios.
-    jf = _find_json_file(data, "pmm")
+    jf = _find_json_file(data, "pmm", "design_columns")
     if jf:
         df = _load_json_table(jf)
         if df is not None and not df.empty:
@@ -469,6 +476,22 @@ def _extract_joint_shear(data: ReportData):
         if df is not None and not df.empty:
             data.joint_shear_data = df
             log.info("Loaded joint shear data from %s", jf.name)
+
+
+def _extract_columns_100_30(data: ReportData):
+    """Load the cached 100%-30% column check table."""
+    table_dir = _get_table_results_dir(data)
+    if table_dir is None:
+        return
+
+    result_file = table_dir / "columns_100_30.json"
+    if not result_file.exists():
+        return
+
+    df = _load_json_table(result_file)
+    if df is not None and not df.empty:
+        data.columns_100_30_data = df
+        log.info("Loaded 100%-30% data from %s", result_file.name)
 
 
 def _extract_frame_data(etabs, data: ReportData):

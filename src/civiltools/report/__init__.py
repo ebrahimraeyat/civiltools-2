@@ -1,5 +1,5 @@
 """
-Report subpackage — PDF and DOCX structural engineering reports.
+Report subpackage — DOCX structural engineering reports.
 
 Provides:
 - ReportData:  dataclass holding all extracted ETABS data

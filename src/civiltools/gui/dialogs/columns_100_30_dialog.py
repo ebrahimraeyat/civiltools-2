@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QMessageBox, QFileDialog,
 )
 
+from civiltools.commands.columns_100_30 import run_columns_100_30
 from civiltools.etabs import config
 from civiltools.commands.base import CommandResult
 from civiltools.gui.busy_dialog import BusyDialog
@@ -139,8 +140,16 @@ class Columns10030Dialog(QDialog):
                 parent=self,
                 disable_widgets=[self.ui],
             ) as dlg:
-                df = dlg.run(lambda: self._etabs.frame_obj.require_100_30(
-                    load_names, file_path, type_, self._code))
+                df = dlg.run(lambda: run_columns_100_30(
+                    self._etabs,
+                    {
+                        "settings": d,
+                        "load_names": load_names,
+                        "file_path": file_path,
+                        "structure_type": type_,
+                        "code": self._code,
+                    },
+                ))
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
             return
@@ -165,6 +174,13 @@ class Columns10030Dialog(QDialog):
             pass
 
         n_req = len(df[df["Result"] == False]) if "Result" in df.columns else 0
+        self._report_params = {
+            "dynamic": bool(getattr(self.ui, "dynamic_groupbox", None)
+                             and self.ui.dynamic_groupbox.isChecked()),
+            "structure_type": type_,
+            "file_path": str(file_path) if file_path else "",
+            "code": self._code,
+        }
         self._result = CommandResult(
             title="Columns 100-30",
             dataframe=df,
@@ -176,3 +192,7 @@ class Columns10030Dialog(QDialog):
     @property
     def result(self) -> CommandResult | None:
         return self._result
+
+    @property
+    def report_params(self) -> dict:
+        return getattr(self, "_report_params", {})

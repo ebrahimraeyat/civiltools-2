@@ -1071,6 +1071,37 @@ def _section_joint_shear(doc: Document, data: ReportData, lang: str):
     _add_df_table(doc, data.joint_shear_data)
 
 
+def _section_columns_100_30(doc: Document, data: ReportData, lang: str):
+    """Render the Iranian Standard 2800 Clause 4-1-3 column check."""
+    doc.add_heading("100%-30% Orthogonal Column Check", level=1)
+    if data.columns_100_30_data is None or data.columns_100_30_data.empty:
+        doc.add_paragraph(get_string("NOT_AVAILABLE", lang))
+        return
+
+    doc.add_paragraph(
+        "Iranian Standard No. 2800, Clause 4-1-3 requires orthogonal seismic "
+        "effects to be combined as 100 percent in one principal direction plus "
+        "30 percent in the perpendicular direction, and vice versa, including "
+        "the applicable positive and negative signs. This check identifies the "
+        "columns for which the 100%-30% combination is required."
+    )
+    _add_df_table(doc, data.columns_100_30_data)
+
+    if "Result" in data.columns_100_30_data.columns:
+        values = data.columns_100_30_data["Result"].astype(str).str.strip().str.lower()
+        required_count = int(values.isin({"false", "0", "no"}).sum())
+        if required_count:
+            doc.add_paragraph(
+                f"Result: {required_count} column(s) require the 100%-30% "
+                "orthogonal load combination."
+            )
+        else:
+            doc.add_paragraph(
+                "Result: No columns were identified as requiring the 100%-30% "
+                "orthogonal load combination."
+            )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Section dispatch
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1088,6 +1119,7 @@ _SECTION_DISPATCH = {
     "torsion":                _section_torsion,
     "joint_shear":            _section_joint_shear,
     "pmm_columns":            _section_pmm_columns,
+    "columns_100_30":         _section_columns_100_30,
     "story_plans":            _section_story_plans,
     "area_loads":             _section_area_loads,
 }
