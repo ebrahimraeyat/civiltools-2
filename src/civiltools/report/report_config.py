@@ -114,11 +114,17 @@ class ReportConfig:
         """Sections in order, excluding disabled ones."""
         return [s for s in self.section_order if s not in self.disabled_sections]
 
-    def get_section_name(self, key: str) -> str:
+    def get_section_name(self, key: str, language: str | None = None) -> str:
         """Get localized section display name."""
+        selected_language = language or (
+            "fa" if self.language in ("fa", "both") else "en"
+        )
+        custom = self.section_titles.get(key, {})
+        custom_title = custom.get(selected_language)
+        if custom_title:
+            return custom_title
         entry = SECTION_NAMES.get(key, {"en": key})
-        lang = "fa" if self.language in ("fa", "both") else "en"
-        return entry.get(lang, entry.get("en", key))
+        return entry.get(selected_language, entry.get("en", key))
 
     # ── Serialization ─────────────────────────────────────────────────
 

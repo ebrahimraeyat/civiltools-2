@@ -1125,6 +1125,20 @@ _SECTION_DISPATCH = {
 }
 
 
+def _replace_section_h1(doc: Document, start_index: int, title: str, rtl: bool) -> None:
+    """Replace the first H1 emitted by a section renderer, preserving lower headings."""
+    for paragraph in doc.paragraphs[start_index:]:
+        if paragraph.style.name != "Heading 1":
+            continue
+        paragraph.text = title
+        if rtl:
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            properties = paragraph._p.get_or_add_pPr()
+            if properties.find(docx.oxml.ns.qn("w:bidi")) is None:
+                properties.append(docx.oxml.OxmlElement("w:bidi"))
+        return
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # High-level builder
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1210,10 +1224,17 @@ def create_docx_report(
     for section_key in config.active_sections:
         renderer = _SECTION_DISPATCH.get(section_key)
         if renderer:
+            start_index = len(doc.paragraphs)
             renderer(doc, data, lang)
+            _replace_section_h1(
+                doc,
+                start_index,
+                config.get_section_name(section_key, lang),
+                rtl=lang == "fa",
+            )
             doc.add_page_break()
         else:
-            doc.add_heading(config.get_section_name(section_key), level=1)
+            doc.add_heading(config.get_section_name(section_key, lang), level=1)
             doc.add_paragraph(f"[Section: {section_key} — content pending]")
             doc.add_page_break()
 

@@ -11,7 +11,7 @@ import pandas as pd
 from docx import Document
 
 from civiltools.report.data_extractor import ReportData
-from civiltools.report.docx_report import _section_columns_100_30
+from civiltools.report.docx_report import _section_columns_100_30, create_docx_report
 from civiltools.report.latex_str import (
     earthquake_c_with_values,
     earthquake_formula,
@@ -114,6 +114,70 @@ def test_100_30_section_contains_clause_text_and_result():
     assert "Clause 4-1-3" in text
     assert "100%-30%" in text
     assert "1 column(s) require" in text
+
+
+def test_custom_english_title_replaces_only_section_h1(tmp_path):
+    output = tmp_path / "custom-title.docx"
+    data = ReportData(
+        project_name="Test",
+        columns_100_30_data=pd.DataFrame({"UniqueName": ["C1"], "Result": [False]}),
+    )
+    config = ReportConfig(
+        language="en",
+        section_order=["columns_100_30"],
+        include_table_of_contents=False,
+        section_titles={
+            "columns_100_30": {
+                "en": "Custom Orthogonal Seismic Check",
+                "fa": "کنترل سفارشی زلزله",
+            }
+        },
+    )
+
+    create_docx_report(data, config, output)
+
+    document = Document(output)
+    headings = [
+        paragraph.text
+        for paragraph in document.paragraphs
+        if paragraph.style.name == "Heading 1"
+    ]
+    body = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert headings == ["Custom Orthogonal Seismic Check"]
+    assert "Clause 4-1-3" in body
+
+
+def test_custom_persian_title_is_used_for_section_h1(tmp_path):
+    output = tmp_path / "custom-title-fa.docx"
+    data = ReportData(
+        project_name="Test",
+        columns_100_30_data=pd.DataFrame({"UniqueName": ["C1"], "Result": [True]}),
+    )
+    config = ReportConfig(
+        language="fa",
+        section_order=["columns_100_30"],
+        include_table_of_contents=False,
+        section_titles={
+            "columns_100_30": {
+                "en": "Custom Orthogonal Seismic Check",
+                "fa": "کنترل سفارشی زلزله",
+            }
+        },
+    )
+
+    create_docx_report(data, config, output)
+
+    document = Document(output)
+    headings = [
+        paragraph.text
+        for paragraph in document.paragraphs
+        if paragraph.style.name == "Heading 1"
+    ]
+    assert headings == ["کنترل سفارشی زلزله"]
+    heading = next(
+        paragraph for paragraph in document.paragraphs if paragraph.style.name == "Heading 1"
+    )
+    assert "w:bidi" in heading._p.xml
 
 
 class TestLatexStr:
