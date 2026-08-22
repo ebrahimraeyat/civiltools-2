@@ -11,7 +11,6 @@ Shows a pandas-backed table with:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QListWidget, QListWidgetItem, QMenu, QWidgetAction,
 )
 
+from civiltools.gui.result_persistence import save_table_model
 from civiltools.gui.table_models import PandasModel
 
 
@@ -666,27 +666,7 @@ class ResultWidget(QWidget):
 
     def save_to_json(self, filepath: str | Path):
         """Save table data + cell colors to JSON (matches FreeCAD format)."""
-        data = []
-        for col in range(self._model.columnCount()):
-            text = self._model.headerData(
-                col, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole
-            )
-            data.append({"row": 0, "col": col, "text": str(text), "color": ""})
-
-        for row in range(self._model.rowCount()):
-            for col in range(self._model.columnCount()):
-                idx = self._model.index(row, col)
-                text = self._model.data(idx, Qt.ItemDataRole.DisplayRole) or ""
-                bg = self._model.data(idx, Qt.ItemDataRole.BackgroundRole)
-                color = bg.name() if isinstance(bg, QColor) else ""
-                data.append({
-                    "row": row + 1, "col": col,
-                    "text": str(text), "color": color,
-                })
-
-        Path(filepath).write_text(
-            json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8"
-        )
+        save_table_model(self._model, filepath)
 
 
 class ColumnValueFilterProxyModel(QtCore.QSortFilterProxyModel):

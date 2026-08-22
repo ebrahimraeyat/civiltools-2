@@ -143,6 +143,7 @@ from civiltools.commands.base import BaseCommand, CommandResult
 from civiltools.gui import table_models
 from civiltools.gui import delegates
 from civiltools.gui.result_widget import ResultWidget
+from civiltools.gui.result_persistence import persist_result_table
 from civiltools.gui.connect_dialog import ConnectDialog
 from civiltools.gui.param_dialog import ParamDialog
 from civiltools.gui.icons import icon, COMMAND_ICONS, APP_ICON, CONNECT_ICON, REPORT_ICON, QUIT_ICON, HELP_ICON
@@ -349,6 +350,31 @@ class MainWindow(QMainWindow):
         idx = self._tabs.addTab(widget, tab_icon, result.title)
         self._tabs.setCurrentIndex(idx)
         self._sync_poll_with_current_tab(idx)
+        self._persist_result_table(widget, result, cmd_class)
+
+    def _persist_result_table(
+        self,
+        widget: ResultWidget,
+        result: CommandResult,
+        cmd_class: type[BaseCommand],
+    ) -> None:
+        """Persist eligible ETABS result tabs without affecting the UI flow."""
+        if (
+            not getattr(cmd_class, "requires_etabs", True)
+            or not self._conn.is_connected
+            or not self._conn.model_path
+            or not getattr(cmd_class, "command_id", "")
+        ):
+            return
+        try:
+            persist_result_table(
+                widget._model,
+                self._conn.model_path,
+                cmd_class.command_id,
+                result.title or cmd_class.label,
+            )
+        except Exception as exc:
+            app_log.warning(f"Could not cache {cmd_class.label} results: {exc}")
 
     def _sync_poll_with_current_tab(self, index: int) -> None:
         """Stop background COM polling while Columns Control is active."""
