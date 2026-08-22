@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSpinBox,
     QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
@@ -169,18 +168,11 @@ class ReportDialog(QDialog):
         dir_lay.addWidget(browse_btn)
         layout.addWidget(dir_group)
 
-        # ── Output + workers ────────────────────────────────────────
+        # ── Output options ──────────────────────────────────────────
         opt_group = QGroupBox("Options")
         opt_lay = QHBoxLayout(opt_group)
 
         opt_lay.addWidget(QLabel("Output: Word (DOCX)"))
-
-        opt_lay.addWidget(QLabel("Workers:"))
-        self._workers_spin = QSpinBox()
-        self._workers_spin.setRange(1, 16)
-        self._workers_spin.setValue(self._report_preferences.get("workers", 4))
-        self._workers_spin.setToolTip("Parallel processes for image rendering")
-        opt_lay.addWidget(self._workers_spin)
 
         # TOC check
         self._toc_check = QCheckBox("Table of Contents")
@@ -270,7 +262,7 @@ class ReportDialog(QDialog):
     def _on_generate(self):
         """Build config from UI and launch the report worker."""
         config = self._build_config()
-        self._persist_preferences()
+        self._persist_model_sources()
 
         # Get building if not already provided
         if self._building is None:
@@ -292,7 +284,7 @@ class ReportDialog(QDialog):
             building=self._building,
             config=config,
             output_dir=self._output_dir,
-            max_workers=self._workers_spin.value(),
+            max_workers=self._report_preferences.get("workers", 4),
             parent=self,
         )
         self._worker.progress.connect(self._on_progress)
@@ -421,7 +413,7 @@ class ReportDialog(QDialog):
         if read_from_etabs:
             status = "ETABS"
         elif source_path is not None:
-            status = f"Saved JSON: {source_path.name}"
+            status = f"Saved JSON: {source_path.stem}"
         elif self._fallback_check.isChecked():
             status = "ETABS fallback"
         else:
@@ -528,18 +520,7 @@ class ReportDialog(QDialog):
             include_table_of_contents=self._toc_check.isChecked(),
         )
 
-    def _persist_preferences(self) -> None:
-        report = dict(self._report_preferences)
-        report.update(
-            {
-                "workers": self._workers_spin.value(),
-                "include_table_of_contents": self._toc_check.isChecked(),
-                "fallback_to_etabs_if_missing": self._fallback_check.isChecked(),
-                "sections": self._section_records(),
-            }
-        )
-        self._settings.update({"report": report})
-        self._report_preferences = self._settings.get("report")
+    def _persist_model_sources(self) -> None:
         if self._model_path is not None:
             ModelReportSources(
                 section_json_paths=dict(self._section_json_paths)

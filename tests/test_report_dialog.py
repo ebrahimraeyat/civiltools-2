@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGroupBox
+from PySide6.QtWidgets import QGroupBox, QSpinBox
 
 from civiltools.config import Settings
 from civiltools.gui.dialogs.report_dialog import (
@@ -56,6 +56,7 @@ def test_report_dialog_uses_one_unified_section_table(qtbot, tmp_path):
     groups = {group.title() for group in dialog.findChildren(QGroupBox)}
     assert "Refresh Results from ETABS" not in groups
     assert "Report Sections and Sources" in groups
+    assert dialog.findChildren(QSpinBox) == []
     assert dialog._sections.topLevelItemCount() == len(DEFAULT_SECTION_ORDER)
     assert [_section_item(dialog, key).text(1) for key in DEFAULT_SECTION_ORDER]
 
@@ -134,7 +135,7 @@ def test_table_json_provenance_warns_for_other_model_and_legacy(tmp_path):
     )
 
 
-def test_report_dialog_persists_global_choices_and_model_paths(qtbot, tmp_path):
+def test_report_dialog_keeps_global_choices_and_persists_model_paths(qtbot, tmp_path):
     model_path = tmp_path / "building.EDB"
     settings = Settings(path=tmp_path / "settings.json")
     source_file = tmp_path / "drift.json"
@@ -144,19 +145,19 @@ def test_report_dialog_persists_global_choices_and_model_paths(qtbot, tmp_path):
     )
     dialog = ReportDialog(_Etabs(str(model_path)), settings=settings)
     qtbot.addWidget(dialog)
+    original_report = settings.get("report")
 
     drift_item = _section_item(dialog, "drift")
     drift_item.setCheckState(0, Qt.CheckState.Unchecked)
     drift_item.setCheckState(2, Qt.CheckState.Unchecked)
+    dialog._toc_check.setChecked(not dialog._toc_check.isChecked())
+    dialog._fallback_check.setChecked(not dialog._fallback_check.isChecked())
     assert dialog._set_section_json_path("drift", source_file) is True
-    dialog._persist_preferences()
+    assert drift_item.text(3) == "Saved JSON: drift"
+    dialog._persist_model_sources()
 
     restored = Settings(path=tmp_path / "settings.json")
-    saved_drift = next(
-        section for section in restored.get("report")["sections"] if section["key"] == "drift"
-    )
-    assert saved_drift["included"] is False
-    assert saved_drift["read_from_etabs"] is False
+    assert restored.get("report") == original_report
     assert "section_json_paths" not in restored.get("report")
     assert ModelReportSources.load_for_model(model_path).section_json_paths == {
         "drift": str(source_file)
