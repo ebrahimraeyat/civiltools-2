@@ -168,20 +168,12 @@ class ReportDialog(QDialog):
         dir_lay.addWidget(browse_btn)
         layout.addWidget(dir_group)
 
-        # ── Output options ──────────────────────────────────────────
-        opt_group = QGroupBox("Options")
-        opt_lay = QHBoxLayout(opt_group)
-
-        opt_lay.addWidget(QLabel("Output: Word (DOCX)"))
-
         # TOC check
         self._toc_check = QCheckBox("Table of Contents")
         self._toc_check.setChecked(
             self._report_preferences.get("include_table_of_contents", True)
         )
-        opt_lay.addWidget(self._toc_check)
-
-        layout.addWidget(opt_group)
+        layout.addWidget(self._toc_check)
 
         # ── Unified report sections and sources ────────────────────
         sec_group = QGroupBox("Report Sections and Sources")
