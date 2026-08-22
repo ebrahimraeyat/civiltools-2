@@ -92,6 +92,11 @@ def _default_settings() -> dict:
     }
 
 
+def default_report_preferences() -> dict:
+    """Return a fresh copy of the application-wide report defaults."""
+    return copy.deepcopy(_default_settings()["report"])
+
+
 def _normalize_report(raw_report) -> dict:
     defaults = _default_settings()["report"]
     report = copy.deepcopy(raw_report) if isinstance(raw_report, dict) else {}

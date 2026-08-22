@@ -649,6 +649,10 @@ class MainWindow(QMainWindow):
 
         # ── Help ────────────────────────────────────────────────────
         help_menu = mb.addMenu("&Help")
+        act_settings = help_menu.addAction("&Settings...")
+        act_settings.setShortcut("Ctrl+,")
+        act_settings.triggered.connect(self._show_app_settings)
+        help_menu.addSeparator()
         if self.help_panel:
             act_help = help_menu.addAction(icon(HELP_ICON), "&Help Panel")
             act_help.setShortcut(QKeySequence.StandardKey.HelpContents)
@@ -741,6 +745,14 @@ class MainWindow(QMainWindow):
             else:
                 self.help_panel.show()
                 self.help_panel.raise_()
+
+    def _show_app_settings(self):
+        from civiltools.gui.dialogs.app_settings_dialog import AppSettingsDialog
+
+        dialog = AppSettingsDialog(self._settings, self)
+        if dialog.exec():
+            self._theme_switch.setChecked(self._settings.get("dark_theme", False))
+            self._apply_theme(self._settings.get("dark_theme", False))
 
     def _show_about(self):
         n_cmds = len(REGISTRY)
