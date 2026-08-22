@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel
+from PySide6.QtWidgets import QCheckBox, QComboBox, QGroupBox, QLabel
 
 from civiltools.gui.dialogs.report_dialog import ReportDialog
 from civiltools.report.report_config import REFRESHABLE_SECTIONS
@@ -25,6 +25,7 @@ def test_report_dialog_shows_cache_live_controls(qtbot):
 
     groups = {group.title(): group for group in dialog.findChildren(QGroupBox)}
     assert groups["Refresh Results from ETABS"].isVisible()
+    assert not dialog.findChildren(QComboBox)
 
     hint_texts = {label.text() for label in dialog.findChildren(QLabel)}
     assert "Checked = Get from ETABS; unchecked = Using Last Results." in hint_texts

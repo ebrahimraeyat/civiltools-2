@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from civiltools.licensing.license_manager import LicenseInfo
 
 
-def run_app(license_info: "LicenseInfo | None" = None):
+def run_app(license_info: LicenseInfo | None = None):
     """Create the Qt application and show the main window.
 
     Parameters
@@ -32,8 +32,10 @@ def run_app(license_info: "LicenseInfo | None" = None):
     app.setApplicationName(__app_name__)
     app.setStyle(settings.get("theme", "fusion"))
 
+    from civiltools.gui.dialogs import report_dialog
     from civiltools.gui.main_window import MainWindow
 
+    print(f"Loaded report dialog: {report_dialog.__file__}")
     win = MainWindow(license_info=license_info, settings=settings)
     win.show()
 

@@ -36,6 +36,15 @@ if %errorlevel% neq 0 (
 
 echo  Starting civilTools ...
 echo.
+set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
+echo  Workspace source: %~dp0src
+call conda run -n civiltools python -c "import civiltools; print('Loaded package:', civiltools.__file__)"
+if %errorlevel% neq 0 (
+    echo.
+    echo  Failed to load civilTools from the workspace source.
+    pause
+    exit /b 1
+)
 call conda run -n civiltools python -m civiltools
 if %errorlevel% neq 0 (
     echo.
