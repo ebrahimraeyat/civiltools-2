@@ -130,7 +130,7 @@ class ReportDialog(QDialog):
         refresh_lay.addLayout(refresh_buttons)
 
         refresh_hint = QLabel(
-            "Checked = refresh from ETABS; unchecked = keep saved JSON tables."
+            "Checked = Get from ETABS; unchecked = Using Last Results."
         )
         refresh_hint.setWordWrap(True)
         refresh_lay.addWidget(refresh_hint)
