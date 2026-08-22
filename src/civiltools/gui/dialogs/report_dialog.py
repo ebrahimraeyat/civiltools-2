@@ -6,6 +6,7 @@ a DOCX report with parallel image rendering.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -20,23 +21,49 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSpinBox,
     QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
 )
 
+from civiltools.config import Settings
 from civiltools.gui.helpers import set_dialog_icon
 from civiltools.report.report_config import (
     REFRESHABLE_SECTIONS,
-    SECTION_NAMES,
+    ModelReportSources,
     ReportConfig,
 )
+
+_RESULT_FILENAMES = {
+    "drift": "drift.json",
+    "torsion": "torsion.json",
+    "pmm_columns": "design_columns.json",
+    "joint_shear": "joint_shear.json",
+    "columns_100_30": "columns_100_30.json",
+}
+
+
+def validate_table_json(path: str | Path, section_key: str) -> str | None:
+    """Return an error message unless *path* is a compatible civilTools table grid."""
+    if section_key not in REFRESHABLE_SECTIONS:
+        return "This report section does not support a saved table JSON."
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"Could not read JSON: {exc}"
+    required = {"row", "col", "text"}
+    if not isinstance(data, list) or not data:
+        return "The file is not a civilTools table result."
+    if any(not isinstance(cell, dict) or not required.issubset(cell) for cell in data):
+        return "The file is not a civilTools colored-grid JSON."
+    return None
 
 
 def _open_file(path: Path) -> None:
@@ -53,12 +80,24 @@ def _open_file(path: Path) -> None:
 class ReportDialog(QDialog):
     """Report configuration + generation dialog."""
 
-    def __init__(self, etabs, building=None, parent=None):
+    def __init__(self, etabs, building=None, settings: Settings | None = None, parent=None):
         super().__init__(parent)
         self._etabs = etabs
         self._building = building
+        self._settings = settings or Settings()
         self._worker = None
         self.result = None  # not used as table command
+        self._updating_sources = False
+        self._browse_buttons: dict[str, QPushButton] = {}
+
+        self._model_path = self._get_model_path()
+        self._model_sources = (
+            ModelReportSources.load_for_model(self._model_path)
+            if self._model_path is not None
+            else ModelReportSources()
+        )
+        self._section_json_paths = dict(self._model_sources.section_json_paths)
+        self._report_preferences = self._settings.get("report", {})
 
         # Try to get building from parent main window
         if self._building is None and parent is not None:
@@ -105,64 +144,58 @@ class ReportDialog(QDialog):
         opt_lay.addWidget(QLabel("Workers:"))
         self._workers_spin = QSpinBox()
         self._workers_spin.setRange(1, 16)
-        self._workers_spin.setValue(min(4, os.cpu_count() or 4))
+        self._workers_spin.setValue(self._report_preferences.get("workers", 4))
         self._workers_spin.setToolTip("Parallel processes for image rendering")
         opt_lay.addWidget(self._workers_spin)
 
         # TOC check
         self._toc_check = QCheckBox("Table of Contents")
-        self._toc_check.setChecked(True)
+        self._toc_check.setChecked(
+            self._report_preferences.get("include_table_of_contents", True)
+        )
         opt_lay.addWidget(self._toc_check)
 
         layout.addWidget(opt_group)
 
-        # ── Cached/live result sources ─────────────────────────────
-        refresh_group = QGroupBox("Refresh Results from ETABS")
-        refresh_lay = QVBoxLayout(refresh_group)
-        refresh_buttons = QHBoxLayout()
+        # ── Unified report sections and sources ────────────────────
+        sec_group = QGroupBox("Report Sections and Sources")
+        sec_lay = QVBoxLayout(sec_group)
+        section_buttons = QHBoxLayout()
         select_all_btn = QPushButton("Select All")
         clear_all_btn = QPushButton("Clear All")
-        select_all_btn.clicked.connect(lambda: self._set_refresh_checks(True))
-        clear_all_btn.clicked.connect(lambda: self._set_refresh_checks(False))
-        refresh_buttons.addWidget(select_all_btn)
-        refresh_buttons.addWidget(clear_all_btn)
-        refresh_buttons.addStretch()
-        refresh_lay.addLayout(refresh_buttons)
+        select_all_btn.clicked.connect(lambda: self._set_include_checks(True))
+        clear_all_btn.clicked.connect(lambda: self._set_include_checks(False))
+        section_buttons.addWidget(select_all_btn)
+        section_buttons.addWidget(clear_all_btn)
+        section_buttons.addStretch()
+        sec_lay.addLayout(section_buttons)
 
-        refresh_hint = QLabel(
-            "Checked = Get from ETABS; unchecked = Using Last Results."
+        self._fallback_check = QCheckBox("Read from ETABS if saved result is missing")
+        self._fallback_check.setChecked(
+            self._report_preferences.get("fallback_to_etabs_if_missing", True)
         )
-        refresh_hint.setWordWrap(True)
-        refresh_lay.addWidget(refresh_hint)
+        self._fallback_check.toggled.connect(self._refresh_all_source_statuses)
+        sec_lay.addWidget(self._fallback_check)
 
-        self._refresh_checks: dict[str, QCheckBox] = {}
-        for key in REFRESHABLE_SECTIONS:
-            label = SECTION_NAMES.get(key, {}).get("en", key)
-            check = QCheckBox(label)
-            self._refresh_checks[key] = check
-            refresh_lay.addWidget(check)
-        layout.addWidget(refresh_group)
-
-        # ── Section list (checkable, drag-reorderable) ──────────────
-        sec_group = QGroupBox("Report Sections (drag to reorder)")
-        sec_lay = QVBoxLayout(sec_group)
-        self._order_list = QListWidget()
-        self._order_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-
-        for key in ReportConfig().section_order:
-            names = SECTION_NAMES.get(key, {})
-            display = names.get("en", key)
-            item = QListWidgetItem(display)
-            item.setData(Qt.ItemDataRole.UserRole, key)
-            item.setFlags(
-                item.flags()
-                | Qt.ItemFlag.ItemIsUserCheckable
-                | Qt.ItemFlag.ItemIsDragEnabled
-            )
-            item.setCheckState(Qt.CheckState.Checked)
-            self._order_list.addItem(item)
-
-        sec_lay.addWidget(self._order_list)
+        self._sections = QTreeWidget()
+        self._sections.setColumnCount(5)
+        self._sections.setHeaderLabels(
+            ["Include", "Section", "Read from ETABS", "Source", ""]
+        )
+        self._sections.setRootIsDecorated(False)
+        self._sections.setAlternatingRowColors(True)
+        self._sections.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._sections.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self._sections.setDefaultDropAction(Qt.DropAction.MoveAction)
+        header = self._sections.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self._populate_sections()
+        self._sections.itemChanged.connect(self._on_section_changed)
+        sec_lay.addWidget(self._sections)
         layout.addWidget(sec_group)
 
         # ── Progress + log ──────────────────────────────────────────
@@ -202,39 +235,12 @@ class ReportDialog(QDialog):
 
     def _on_generate(self):
         """Build config from UI and launch the report worker."""
-        # Build config
-        config = ReportConfig(
-            language="en",
-            output_format="docx",
-            include_table_of_contents=self._toc_check.isChecked(),
-        )
-
-        # Section order
-        active = []
-        disabled = []
-        for i in range(self._order_list.count()):
-            item = self._order_list.item(i)
-            key = item.data(Qt.ItemDataRole.UserRole)
-            if item.checkState() == Qt.CheckState.Checked:
-                active.append(key)
-            else:
-                disabled.append(key)
-        config.section_order = active
-        config.disabled_sections = disabled
-        config.refresh_sections = [
-            key for key, check in self._refresh_checks.items() if check.isChecked()
-        ]
+        config = self._build_config()
+        self._persist_preferences()
 
         # Get building if not already provided
         if self._building is None:
             self._building = self._get_building()
-
-        try:
-            model_file = self._etabs.SapModel.GetModelFilename()
-            if model_file:
-                config.save(ReportConfig.default_config_path(model_file))
-        except Exception:
-            pass
 
         # Disable UI
         self._gen_btn.setEnabled(False)
@@ -298,9 +304,196 @@ class ReportDialog(QDialog):
             f"Report generation failed:\n\n{tb[:600]}",
         )
 
-    def _set_refresh_checks(self, checked: bool):
-        for check in self._refresh_checks.values():
-            check.setChecked(checked)
+    def _get_model_path(self) -> Path | None:
+        try:
+            model_file = self._etabs.SapModel.GetModelFilename()
+        except Exception:
+            return None
+        return Path(model_file) if model_file else None
+
+    def _populate_sections(self) -> None:
+        self._updating_sources = True
+        language = self._report_preferences.get("language", "en")
+        title_key = "title_fa" if language in {"fa", "both"} else "title_en"
+        for section in self._report_preferences.get("sections", []):
+            key = section["key"]
+            item = QTreeWidgetItem(["", section[title_key], "", "", ""])
+            item.setData(1, Qt.ItemDataRole.UserRole, key)
+            item.setFlags(
+                item.flags()
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+            )
+            item.setCheckState(
+                0,
+                Qt.CheckState.Checked if section["included"] else Qt.CheckState.Unchecked,
+            )
+            item.setCheckState(
+                2,
+                Qt.CheckState.Checked
+                if section["read_from_etabs"]
+                else Qt.CheckState.Unchecked,
+            )
+            self._sections.addTopLevelItem(item)
+            browse = QPushButton("Browse...")
+            browse.clicked.connect(
+                lambda checked=False, section_key=key: self._browse_json(section_key)
+            )
+            self._browse_buttons[key] = browse
+            self._sections.setItemWidget(item, 4, browse)
+        self._updating_sources = False
+        self._refresh_all_source_statuses()
+
+    def _section_item(self, section_key: str) -> QTreeWidgetItem | None:
+        for index in range(self._sections.topLevelItemCount()):
+            item = self._sections.topLevelItem(index)
+            if item.data(1, Qt.ItemDataRole.UserRole) == section_key:
+                return item
+        return None
+
+    def _set_include_checks(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for index in range(self._sections.topLevelItemCount()):
+            self._sections.topLevelItem(index).setCheckState(0, state)
+
+    def _on_section_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        if self._updating_sources or column != 2:
+            return
+        self._refresh_source_status(item.data(1, Qt.ItemDataRole.UserRole))
+
+    def _default_json_path(self, section_key: str) -> Path | None:
+        if self._model_path is None or section_key not in _RESULT_FILENAMES:
+            return None
+        return (
+            self._model_path.parent
+            / f"{self._model_path.stem}_table_results"
+            / _RESULT_FILENAMES[section_key]
+        )
+
+    def _effective_json_path(self, section_key: str) -> Path | None:
+        configured = self._section_json_paths.get(section_key)
+        if configured and Path(configured).is_file():
+            return Path(configured)
+        default = self._default_json_path(section_key)
+        return default if default is not None and default.is_file() else None
+
+    def _refresh_source_status(self, section_key: str) -> None:
+        item = self._section_item(section_key)
+        if item is None:
+            return
+        read_from_etabs = item.checkState(2) == Qt.CheckState.Checked
+        source_path = self._effective_json_path(section_key)
+        if read_from_etabs:
+            status = "ETABS"
+        elif source_path is not None:
+            status = f"Saved JSON: {source_path.name}"
+        elif self._fallback_check.isChecked():
+            status = "ETABS fallback"
+        else:
+            status = "Unavailable"
+        item.setText(3, status)
+        button = self._browse_buttons.get(section_key)
+        if button is not None:
+            button.setEnabled(section_key in REFRESHABLE_SECTIONS and not read_from_etabs)
+
+    def _refresh_all_source_statuses(self) -> None:
+        for index in range(self._sections.topLevelItemCount()):
+            item = self._sections.topLevelItem(index)
+            self._refresh_source_status(item.data(1, Qt.ItemDataRole.UserRole))
+
+    def _browse_json(self, section_key: str) -> None:
+        start_dir = str(self._model_path.parent) if self._model_path else str(Path.home())
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select civilTools Result JSON",
+            start_dir,
+            "JSON Files (*.json)",
+        )
+        if selected:
+            self._set_section_json_path(section_key, selected, show_error=True)
+
+    def _set_section_json_path(
+        self,
+        section_key: str,
+        path: str | Path,
+        *,
+        show_error: bool = False,
+    ) -> bool:
+        error = validate_table_json(path, section_key)
+        if error:
+            if show_error:
+                QMessageBox.warning(self, "Invalid Result JSON", error)
+            return False
+        self._section_json_paths[section_key] = str(Path(path))
+        self._refresh_source_status(section_key)
+        return True
+
+    def _section_records(self) -> list[dict]:
+        existing = {
+            section["key"]: section for section in self._report_preferences.get("sections", [])
+        }
+        records = []
+        for index in range(self._sections.topLevelItemCount()):
+            item = self._sections.topLevelItem(index)
+            key = item.data(1, Qt.ItemDataRole.UserRole)
+            record = dict(existing[key])
+            record["included"] = item.checkState(0) == Qt.CheckState.Checked
+            record["read_from_etabs"] = item.checkState(2) == Qt.CheckState.Checked
+            records.append(record)
+        return records
+
+    def _build_config(self) -> ReportConfig:
+        sections = self._section_records()
+        section_order = [section["key"] for section in sections]
+        disabled = [section["key"] for section in sections if not section["included"]]
+        refresh = [
+            section["key"]
+            for section in sections
+            if section["included"]
+            and section["read_from_etabs"]
+            and section["key"] in REFRESHABLE_SECTIONS
+        ]
+        return ReportConfig(
+            language=self._report_preferences.get("language", "en"),
+            output_format="docx",
+            section_order=section_order,
+            disabled_sections=disabled,
+            refresh_sections=refresh,
+            section_sources={
+                section["key"]: (
+                    "etabs" if section["read_from_etabs"] else "json"
+                )
+                for section in sections
+            },
+            section_json_paths=dict(self._section_json_paths),
+            section_titles={
+                section["key"]: {
+                    "en": section["title_en"],
+                    "fa": section["title_fa"],
+                }
+                for section in sections
+            },
+            fallback_to_etabs_if_missing=self._fallback_check.isChecked(),
+            include_table_of_contents=self._toc_check.isChecked(),
+        )
+
+    def _persist_preferences(self) -> None:
+        report = dict(self._report_preferences)
+        report.update(
+            {
+                "workers": self._workers_spin.value(),
+                "include_table_of_contents": self._toc_check.isChecked(),
+                "fallback_to_etabs_if_missing": self._fallback_check.isChecked(),
+                "sections": self._section_records(),
+            }
+        )
+        self._settings.update({"report": report})
+        self._report_preferences = self._settings.get("report")
+        if self._model_path is not None:
+            ModelReportSources(
+                section_json_paths=dict(self._section_json_paths)
+            ).save_for_model(self._model_path)
 
     # ── Building creation ───────────────────────────────────────────
 

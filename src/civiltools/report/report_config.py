@@ -65,6 +65,8 @@ REFRESHABLE_SECTIONS: tuple[str, ...] = (
     "columns_100_30",
 )
 
+MODEL_REPORT_SOURCES_SCHEMA_VERSION = 1
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ReportConfig
@@ -81,6 +83,10 @@ class ReportConfig:
     json_table_order: list[str] = field(default_factory=list)  # explicit JSON table order
     refresh_sections: list[str] = field(default_factory=list)
     refresh_params: dict[str, dict] = field(default_factory=dict)
+    section_sources: dict[str, str] = field(default_factory=dict)
+    section_json_paths: dict[str, str] = field(default_factory=dict)
+    section_titles: dict[str, dict[str, str]] = field(default_factory=dict)
+    fallback_to_etabs_if_missing: bool = True
     page_size: str = "A4"                         # 'A4' or 'Letter'
     include_table_of_contents: bool = True
     include_page_numbers: bool = True
@@ -131,6 +137,46 @@ class ReportConfig:
         """Convention: ``<model_stem>_report_config.json``."""
         p = Path(model_path)
         return p.parent / f"{p.stem}_report_config.json"
+
+
+@dataclass
+class ModelReportSources:
+    """Model-local paths to explicitly selected civilTools result JSON files."""
+
+    schema_version: int = MODEL_REPORT_SOURCES_SCHEMA_VERSION
+    section_json_paths: dict[str, str] = field(default_factory=dict)
+
+    @staticmethod
+    def path_for_model(model_path: Path | str) -> Path:
+        model = Path(model_path)
+        return model.parent / f"{model.stem}_report_sources.json"
+
+    def save_for_model(self, model_path: Path | str) -> Path:
+        path = self.path_for_model(model_path)
+        path.write_text(
+            json.dumps(asdict(self), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return path
+
+    @classmethod
+    def load_for_model(cls, model_path: Path | str) -> ModelReportSources:
+        path = cls.path_for_model(model_path)
+        if not path.exists():
+            return cls()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return cls()
+        paths = data.get("section_json_paths", {}) if isinstance(data, dict) else {}
+        return cls(
+            schema_version=MODEL_REPORT_SOURCES_SCHEMA_VERSION,
+            section_json_paths={
+                str(key): str(value)
+                for key, value in paths.items()
+                if isinstance(key, str) and isinstance(value, str)
+            },
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -733,7 +733,7 @@ class MainWindow(QMainWindow):
 
         from civiltools.gui.dialogs.report_dialog import ReportDialog
 
-        dlg = ReportDialog(self._conn.etabs, parent=self)
+        dlg = ReportDialog(self._conn.etabs, settings=self._settings, parent=self)
         dlg.exec()
 
     # ── Help ────────────────────────────────────────────────────────
