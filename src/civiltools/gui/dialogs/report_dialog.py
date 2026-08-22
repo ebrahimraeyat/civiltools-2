@@ -8,16 +8,14 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
-from typing import Any
-
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QGroupBox,
@@ -25,7 +23,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QAbstractItemView,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -35,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from civiltools.gui.helpers import set_dialog_icon
-from civiltools.report.report_config import ReportConfig, SECTION_NAMES
+from civiltools.report.report_config import SECTION_NAMES, ReportConfig
 
 
 def _open_file(path: Path) -> None:
@@ -47,15 +44,6 @@ def _open_file(path: Path) -> None:
     else:
         subprocess.Popen(["xdg-open", str(path)])
 
-
-
-# ── Format maps ─────────────────────────────────────────────────────
-
-_FORMAT_MAP = {
-    "Word + PDF": "both",
-    "Word (DOCX) only": "docx",
-    "PDF only": "pdf",
-}
 
 
 class ReportDialog(QDialog):
@@ -104,14 +92,11 @@ class ReportDialog(QDialog):
         dir_lay.addWidget(browse_btn)
         layout.addWidget(dir_group)
 
-        # ── Format + workers ────────────────────────────────────────
+        # ── Output + workers ────────────────────────────────────────
         opt_group = QGroupBox("Options")
         opt_lay = QHBoxLayout(opt_group)
 
-        opt_lay.addWidget(QLabel("Format:"))
-        self._fmt_combo = QComboBox()
-        self._fmt_combo.addItems(list(_FORMAT_MAP.keys()))
-        opt_lay.addWidget(self._fmt_combo)
+        opt_lay.addWidget(QLabel("Output: Word (DOCX)"))
 
         opt_lay.addWidget(QLabel("Workers:"))
         self._workers_spin = QSpinBox()
@@ -189,7 +174,7 @@ class ReportDialog(QDialog):
         # Build config
         config = ReportConfig(
             language="en",
-            output_format=_FORMAT_MAP.get(self._fmt_combo.currentText(), "both"),
+            output_format="docx",
             include_table_of_contents=self._toc_check.isChecked(),
         )
 
@@ -241,7 +226,7 @@ class ReportDialog(QDialog):
         sb.setValue(sb.maximum())
         QApplication.processEvents()
 
-    def _on_finished(self, docx_path: str, pdf_path: str):
+    def _on_finished(self, docx_path: str, _unused_pdf_path: str):
         self._progress.setValue(100)
         self._gen_btn.setEnabled(True)
         self._cancel_btn.setEnabled(True)
@@ -249,22 +234,18 @@ class ReportDialog(QDialog):
         parts = []
         if docx_path:
             parts.append(f"Word: {docx_path}")
-        if pdf_path:
-            parts.append(f"PDF:  {pdf_path}")
-
         msg = "Report generated successfully!\n\n" + "\n".join(parts)
         self._log.append("\n" + msg)
 
         answer = QMessageBox.information(
             self, "Report Complete",
-            msg + "\n\nOpen file(s)?",
+            msg + "\n\nOpen file?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            for p in (docx_path, pdf_path):
-                if p:
-                    _open_file(Path(p))
+            if docx_path:
+                _open_file(Path(docx_path))
 
     def _on_error(self, tb: str):
         self._progress.setValue(0)
@@ -282,8 +263,8 @@ class ReportDialog(QDialog):
         """Create Building object from ETABS settings."""
         try:
             from civiltools.etabs.config import (
-                get_settings_from_etabs,
                 current_building_from_config,
+                get_settings_from_etabs,
             )
             d = get_settings_from_etabs(self._etabs)
             if not d:

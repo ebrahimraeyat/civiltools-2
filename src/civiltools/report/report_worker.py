@@ -1,11 +1,4 @@
-"""
-Background report worker — thin Qt wrapper around etabs_api.ReportGenerator.
-
-All heavy logic (data extraction, parallel image rendering, document
-generation) lives in ``etabs_api.report.report_generator.ReportGenerator``.
-This module only adds the Qt Signal/Slot glue needed to keep the GUI
-responsive.
-"""
+"""Background Qt wrapper around the civilTools DOCX report generator."""
 
 from __future__ import annotations
 
@@ -13,19 +6,19 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from etabs_api.report.report_config import ReportConfig
-from etabs_api.report.report_generator import ReportGenerator
+from civiltools.report.report_config import ReportConfig
+from civiltools.report.report_generator import ReportGenerator
 
 
 class ReportWorker(QThread):
-    """QThread wrapper around ReportGenerator.
+    """QThread wrapper around the local DOCX ReportGenerator.
 
     Signals
     -------
     progress(int, str)
         Overall percent (0–100) and human-readable message.
     finished(str, str)
-        Paths to DOCX and PDF files (either may be empty).
+        DOCX path and an empty compatibility value.
     error(str)
         Traceback string on failure.
     """

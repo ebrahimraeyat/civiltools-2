@@ -6,10 +6,8 @@ result manifest management.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Section definitions
@@ -46,7 +44,10 @@ SECTION_NAMES: dict[str, dict[str, str]] = {
     "torsion":                 {"fa": "بی‌نظمی پیچشی", "en": "Torsional Irregularity"},
     "joint_shear":             {"fa": "برش در گره‌ها", "en": "Joint Shear Check"},
     "pmm_columns":             {"fa": "نتایج طراحی ستون‌ها", "en": "Column PMM Design Results"},
-    "story_plans":             {"fa": "پلان تیر و ستون طبقات", "en": "Story Plans — Beams & Columns"},
+    "story_plans": {
+        "fa": "پلان تیر و ستون طبقات",
+        "en": "Story Plans — Beams & Columns",
+    },
     "area_loads":              {"fa": "پلان بارگذاری سطوح", "en": "Area Load Plans"},
     "irregularities":          {"fa": "بی‌نظمی‌ها", "en": "Irregularities"},
     "design_results":          {"fa": "نتایج طراحی", "en": "Design Results"},
@@ -63,7 +64,7 @@ class ReportConfig:
     """Configuration for report generation."""
 
     language: str = "fa"                          # 'fa', 'en', 'both'
-    output_format: str = "both"                   # 'pdf', 'docx', 'both'
+    output_format: str = "docx"
     section_order: list[str] = field(default_factory=lambda: list(DEFAULT_SECTION_ORDER))
     disabled_sections: list[str] = field(default_factory=list)
     json_table_order: list[str] = field(default_factory=list)  # explicit JSON table order

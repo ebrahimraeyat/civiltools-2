@@ -7,15 +7,15 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from civiltools.report.strings import get_string, S, get_all_strings
-from civiltools.report.report_config import ReportConfig
+from civiltools.report.data_extractor import ReportData
 from civiltools.report.latex_str import (
+    earthquake_c_with_values,
     earthquake_formula,
     full_earthquake_calculation,
-    earthquake_c_with_values,
 )
+from civiltools.report.report_config import ReportConfig
+from civiltools.report.report_generator import ReportGenerator
+from civiltools.report.strings import S, get_all_strings, get_string
 
 
 class TestStrings:
@@ -42,6 +42,7 @@ class TestReportConfig:
     def test_defaults(self):
         config = ReportConfig()
         assert config.language == "fa"
+        assert config.output_format == "docx"
         assert config.is_rtl
 
     def test_active_sections(self):
@@ -64,6 +65,37 @@ class TestReportConfig:
         loaded = ReportConfig.load(path)
         assert loaded.language == "both"
         path.unlink()
+
+
+class TestReportGenerator:
+    def test_generates_docx_only(self, monkeypatch, tmp_path):
+        data = ReportData(project_name="Test Building")
+        written_paths = []
+
+        monkeypatch.setattr(
+            "civiltools.report.report_generator.extract_report_data",
+            lambda *args, **kwargs: data,
+        )
+
+        def write_docx(report_data, config, output_path):
+            written_paths.append((report_data, config, output_path))
+            Path(output_path).write_bytes(b"docx")
+
+        monkeypatch.setattr(
+            "civiltools.report.docx_report.create_docx_report",
+            write_docx,
+        )
+
+        generator = ReportGenerator(
+            etabs=object(),
+            config=ReportConfig(output_format="docx"),
+            output_dir=tmp_path,
+        )
+        docx_path, pdf_path = generator.generate()
+
+        assert Path(docx_path) == tmp_path / "Test_Building_report.docx"
+        assert pdf_path == ""
+        assert written_paths == [(data, generator.config, Path(docx_path))]
 
 
 class TestLatexStr:
