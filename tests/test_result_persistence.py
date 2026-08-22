@@ -15,6 +15,7 @@ from civiltools.gui.result_persistence import (
     serialize_table_model,
 )
 from civiltools.gui.table_models import PandasModel
+from civiltools.report.report_config import model_fingerprint
 
 
 class ColoredModel(PandasModel):
@@ -45,6 +46,9 @@ def test_persist_result_table_writes_json_and_manifest(tmp_path):
         (output_path.parent / "manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["torsion.json"]["display_name"]["en"] == "Torsion Check"
+    assert manifest["torsion.json"]["schema_version"] == 1
+    assert manifest["torsion.json"]["section_key"] == "torsion"
+    assert manifest["torsion.json"]["model_fingerprint"] == model_fingerprint(model_path)
 
 
 def test_main_window_persists_only_connected_etabs_results(monkeypatch):

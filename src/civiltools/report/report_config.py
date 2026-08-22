@@ -5,7 +5,9 @@ result manifest management.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -66,6 +68,13 @@ REFRESHABLE_SECTIONS: tuple[str, ...] = (
 )
 
 MODEL_REPORT_SOURCES_SCHEMA_VERSION = 1
+RESULT_TABLE_SCHEMA_VERSION = 1
+
+
+def model_fingerprint(model_path: Path | str) -> str:
+    """Return a stable, non-secret identity for an ETABS model path."""
+    normalized = os.path.normcase(str(Path(model_path).resolve()))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -189,6 +198,9 @@ class _TableEntry:
     display_name: dict[str, str]  # {'fa': '…', 'en': '…'}
     category: str = ""
     order: int = 50
+    schema_version: int | None = None
+    section_key: str | None = None
+    model_fingerprint: str | None = None
 
 
 class ResultManifest:
@@ -209,11 +221,21 @@ class ResultManifest:
         display_name: dict[str, str] | str,
         category: str = "",
         order: int = 50,
+        section_key: str | None = None,
+        source_model_fingerprint: str | None = None,
     ):
         """Add or update a table entry."""
         if isinstance(display_name, str):
             display_name = {"en": display_name, "fa": display_name}
-        self._entries[filename] = _TableEntry(filename, display_name, category, order)
+        self._entries[filename] = _TableEntry(
+            filename,
+            display_name,
+            category,
+            order,
+            RESULT_TABLE_SCHEMA_VERSION,
+            section_key,
+            source_model_fingerprint,
+        )
         self._save()
 
     def get_ordered_files(self, custom_order: list[str] | None = None) -> list[Path]:
@@ -251,6 +273,9 @@ class ResultManifest:
                 "display_name": e.display_name,
                 "category": e.category,
                 "order": e.order,
+                "schema_version": e.schema_version,
+                "section_key": e.section_key,
+                "model_fingerprint": e.model_fingerprint,
             }
             for fn, e in self._entries.items()
         }
@@ -267,4 +292,7 @@ class ResultManifest:
                 display_name=meta.get("display_name", {"en": fn}),
                 category=meta.get("category", ""),
                 order=meta.get("order", 50),
+                schema_version=meta.get("schema_version"),
+                section_key=meta.get("section_key"),
+                model_fingerprint=meta.get("model_fingerprint"),
             )

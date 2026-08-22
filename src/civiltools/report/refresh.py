@@ -13,7 +13,7 @@ from civiltools.commands.design_columns import DesignColumnsCheck
 from civiltools.commands.drift import DriftCheck
 from civiltools.commands.joint_shear import JointShearCheck
 from civiltools.commands.torsion import TorsionCheck
-from civiltools.report.report_config import ReportConfig, ResultManifest
+from civiltools.report.report_config import ReportConfig, ResultManifest, model_fingerprint
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +72,8 @@ def refresh_report_results(
                 output.name,
                 {"en": display_name, "fa": display_name},
                 category="checks",
+                section_key=section_key,
+                source_model_fingerprint=model_fingerprint(model_path),
             )
         except Exception as exc:
             log.warning("Could not refresh %s: %s", section_key, exc)

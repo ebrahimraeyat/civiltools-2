@@ -39,6 +39,7 @@ from civiltools.report.report_config import (
     REFRESHABLE_SECTIONS,
     ModelReportSources,
     ReportConfig,
+    model_fingerprint,
 )
 
 _RESULT_FILENAMES = {
@@ -47,6 +48,13 @@ _RESULT_FILENAMES = {
     "pmm_columns": "design_columns.json",
     "joint_shear": "joint_shear.json",
     "columns_100_30": "columns_100_30.json",
+}
+_SECTION_FILE_KEYS = {
+    "drift": {"drift"},
+    "torsion": {"torsion"},
+    "pmm_columns": {"pmm_columns", "design_columns"},
+    "joint_shear": {"joint_shear"},
+    "columns_100_30": {"columns_100_30"},
 }
 
 
@@ -63,6 +71,32 @@ def validate_table_json(path: str | Path, section_key: str) -> str | None:
         return "The file is not a civilTools table result."
     if any(not isinstance(cell, dict) or not required.issubset(cell) for cell in data):
         return "The file is not a civilTools colored-grid JSON."
+    return None
+
+
+def table_json_provenance_warning(
+    path: str | Path,
+    section_key: str,
+    model_path: str | Path | None,
+) -> str | None:
+    """Return a warning for legacy or cross-model table JSON metadata."""
+    source = Path(path)
+    manifest_path = source.parent / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "This legacy civilTools JSON has no source-model metadata."
+    entry = manifest.get(source.name) if isinstance(manifest, dict) else None
+    if not isinstance(entry, dict):
+        return "This legacy civilTools JSON has no source-model metadata."
+    recorded_section = entry.get("section_key")
+    if recorded_section and recorded_section not in _SECTION_FILE_KEYS.get(section_key, set()):
+        return f"This JSON belongs to the '{recorded_section}' report section."
+    recorded_model = entry.get("model_fingerprint")
+    if not recorded_model:
+        return "This legacy civilTools JSON has no source-model metadata."
+    if model_path is not None and recorded_model != model_fingerprint(model_path):
+        return "This result JSON was generated for a different ETABS model."
     return None
 
 
@@ -425,6 +459,17 @@ class ReportDialog(QDialog):
             if show_error:
                 QMessageBox.warning(self, "Invalid Result JSON", error)
             return False
+        warning = table_json_provenance_warning(path, section_key, self._model_path)
+        if warning and show_error:
+            answer = QMessageBox.question(
+                self,
+                "Result Source Warning",
+                f"{warning}\n\nUse this file anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
         self._section_json_paths[section_key] = str(Path(path))
         self._refresh_source_status(section_key)
         return True
@@ -454,6 +499,11 @@ class ReportDialog(QDialog):
             and section["read_from_etabs"]
             and section["key"] in REFRESHABLE_SECTIONS
         ]
+        effective_json_paths = {}
+        for section in sections:
+            path = self._effective_json_path(section["key"])
+            if path is not None:
+                effective_json_paths[section["key"]] = str(path)
         return ReportConfig(
             language=self._report_preferences.get("language", "en"),
             output_format="docx",
@@ -466,7 +516,7 @@ class ReportDialog(QDialog):
                 )
                 for section in sections
             },
-            section_json_paths=dict(self._section_json_paths),
+            section_json_paths=effective_json_paths,
             section_titles={
                 section["key"]: {
                     "en": section["title_en"],

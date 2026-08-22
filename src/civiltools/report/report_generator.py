@@ -20,8 +20,8 @@ from civiltools.report.data_extractor import (
     LoadSetDef,
     extract_report_data,
 )
-from civiltools.report.report_config import ReportConfig
 from civiltools.report.refresh import refresh_report_results
+from civiltools.report.report_config import REFRESHABLE_SECTIONS, ReportConfig
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,83 @@ def _render_area(
     from civiltools.report.area_renderer import render_area_load_plan
 
     return render_area_load_plan(areas, load_set_defs, frames, story, dpi)
+
+
+def _resolve_section_sources(
+    etabs: Any,
+    config: ReportConfig,
+    progress: Callable[[int, str], None] | None = None,
+) -> None:
+    """Resolve requested section sources before any refresh or extraction."""
+    connected = _etabs_is_available(etabs)
+    disabled = set(config.disabled_sections)
+    refresh = set(config.refresh_sections)
+
+    for section_key in config.section_order:
+        if section_key in disabled or section_key not in config.section_sources:
+            continue
+        requested = config.section_sources[section_key]
+        configured = config.section_json_paths.get(section_key)
+        json_available = bool(configured and Path(configured).is_file())
+
+        if requested == "json" and json_available:
+            refresh.discard(section_key)
+            continue
+
+        if requested == "json" and not json_available:
+            if config.fallback_to_etabs_if_missing and connected:
+                config.section_sources[section_key] = "etabs"
+                if section_key in REFRESHABLE_SECTIONS:
+                    refresh.add(section_key)
+                message = f"{section_key}: saved JSON missing; using ETABS fallback."
+                log.warning(message)
+                if progress:
+                    progress(0, message)
+                continue
+            config.section_sources[section_key] = "unavailable"
+            disabled.add(section_key)
+            refresh.discard(section_key)
+            message = f"{section_key}: no saved JSON available; section skipped."
+            log.warning(message)
+            if progress:
+                progress(0, message)
+            continue
+
+        if requested == "etabs" and connected:
+            if section_key in REFRESHABLE_SECTIONS:
+                refresh.add(section_key)
+            continue
+
+        if requested == "etabs" and not connected and json_available:
+            config.section_sources[section_key] = "json"
+            refresh.discard(section_key)
+            message = f"{section_key}: ETABS disconnected; using saved JSON."
+            log.warning(message)
+            if progress:
+                progress(0, message)
+            continue
+
+        config.section_sources[section_key] = "unavailable"
+        disabled.add(section_key)
+        refresh.discard(section_key)
+        message = f"{section_key}: ETABS disconnected and no saved JSON; section skipped."
+        log.warning(message)
+        if progress:
+            progress(0, message)
+
+    config.disabled_sections = [
+        key for key in config.section_order if key in disabled
+    ]
+    config.refresh_sections = [
+        key for key in config.section_order if key in refresh and key not in disabled
+    ]
+
+
+def _etabs_is_available(etabs: Any) -> bool:
+    try:
+        return bool(etabs.SapModel.GetModelFilename())
+    except Exception:
+        return False
 
 
 class ReportGenerator:
@@ -113,6 +190,7 @@ class ReportGenerator:
             log.info("[%3d%%] %s", percent, message)
 
     def _generate(self) -> tuple[str, str]:
+        _resolve_section_sources(self.etabs, self.config, progress=self._prog)
         refresh_report_results(
             self.etabs,
             self.config,
@@ -129,6 +207,7 @@ class ReportGenerator:
             self.etabs,
             self.building,
             progress=extraction_progress,
+            config=self.config,
         )
 
         self._prog(33, "Phase 2 - Rendering images...")

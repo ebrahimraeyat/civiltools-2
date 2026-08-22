@@ -8,8 +8,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGroupBox
 
 from civiltools.config import Settings
-from civiltools.gui.dialogs.report_dialog import ReportDialog, validate_table_json
-from civiltools.report.report_config import DEFAULT_SECTION_ORDER, ModelReportSources
+from civiltools.gui.dialogs.report_dialog import (
+    ReportDialog,
+    table_json_provenance_warning,
+    validate_table_json,
+)
+from civiltools.report.report_config import (
+    DEFAULT_SECTION_ORDER,
+    ModelReportSources,
+    model_fingerprint,
+)
 
 
 class _SapModel:
@@ -94,6 +102,36 @@ def test_validate_table_json_accepts_civiltools_grid_and_rejects_other_json(tmp_
     assert validate_table_json(valid, "drift") is None
     assert validate_table_json(valid, "model_settings") is not None
     assert validate_table_json(invalid, "drift") is not None
+
+
+def test_table_json_provenance_warns_for_other_model_and_legacy(tmp_path):
+    result = tmp_path / "drift.json"
+    result.write_text(
+        json.dumps([{"row": 0, "col": 0, "text": "Story", "color": ""}]),
+        encoding="utf-8",
+    )
+    current_model = tmp_path / "current.EDB"
+    other_model = tmp_path / "other.EDB"
+
+    assert "legacy" in table_json_provenance_warning(
+        result, "drift", current_model
+    ).lower()
+
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "drift.json": {
+                    "schema_version": 1,
+                    "section_key": "drift",
+                    "model_fingerprint": model_fingerprint(other_model),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert "different ETABS model" in table_json_provenance_warning(
+        result, "drift", current_model
+    )
 
 
 def test_report_dialog_persists_global_choices_and_model_paths(qtbot, tmp_path):

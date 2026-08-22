@@ -9,7 +9,7 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
-from civiltools.report.report_config import ResultManifest
+from civiltools.report.report_config import ResultManifest, model_fingerprint
 
 
 def serialize_table_model(model: Any) -> list[dict[str, Any]]:
@@ -68,6 +68,8 @@ def persist_result_table(
         filename,
         {"en": display_name, "fa": display_name},
         category="checks",
+        section_key=command_id,
+        source_model_fingerprint=model_fingerprint(source),
     )
     if params:
         save_refresh_params(results_dir, command_id, params)

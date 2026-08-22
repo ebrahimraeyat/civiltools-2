@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
+
+from civiltools.report.report_config import ReportConfig
 
 log = logging.getLogger(__name__)
 
@@ -118,6 +121,7 @@ def extract_report_data(
     etabs,
     building=None,
     progress: Callable[[int, str], None] | None = None,
+    config: ReportConfig | None = None,
 ) -> ReportData:
     """Extract all report data from a live ETABS connection.
 
@@ -164,11 +168,11 @@ def extract_report_data(
 
     # ── Story drift (JSON first, then API) ────────────────────────────
     _prog(15, "Reading story drifts…")
-    _extract_drift(etabs, building, data)
+    _extract_drift(etabs, building, data, _configured_json(config, "drift"))
 
     # ── Torsion (JSON first, then API) ────────────────────────────────
     _prog(25, "Reading torsion data…")
-    _extract_torsion(etabs, data)
+    _extract_torsion(etabs, data, _configured_json(config, "torsion"))
 
     # ── Story forces ──────────────────────────────────────────────────
     _prog(32, "Reading story forces…")
@@ -176,15 +180,15 @@ def extract_report_data(
 
     # ── Column PMM (JSON first, then API) ─────────────────────────────
     _prog(40, "Reading column design results…")
-    _extract_pmm(etabs, data)
+    _extract_pmm(etabs, data, _configured_json(config, "pmm_columns"))
 
     # ── Joint shear (JSON only) ───────────────────────────────────────
     _prog(45, "Reading joint shear data…")
-    _extract_joint_shear(data)
+    _extract_joint_shear(data, _configured_json(config, "joint_shear"))
 
     # ── 100%-30% column check (JSON only) ─────────────────────────────
     _prog(48, "Reading 100%-30% column check…")
-    _extract_columns_100_30(data)
+    _extract_columns_100_30(data, _configured_json(config, "columns_100_30"))
 
     # ── Frame geometry ────────────────────────────────────────────────
     _prog(50, "Reading frame geometry…")
@@ -209,6 +213,14 @@ def _get_table_results_dir(data: ReportData) -> Path | None:
         if d.is_dir():
             return d
     return None
+
+
+def _configured_json(config: ReportConfig | None, section_key: str) -> Path | None:
+    if config is None or config.section_sources.get(section_key) != "json":
+        return None
+    value = config.section_json_paths.get(section_key)
+    path = Path(value) if value else None
+    return path if path is not None and path.is_file() else None
 
 
 def _find_json_file(data: ReportData, *keywords: str) -> Path | None:
@@ -386,10 +398,15 @@ def _extract_load_combinations(etabs, data: ReportData):
         log.info("Found %d design-active combinations", len(design_names))
 
 
-def _extract_drift(etabs, building, data: ReportData):
+def _extract_drift(
+    etabs,
+    building,
+    data: ReportData,
+    json_path: Path | None = None,
+):
     """Story drift data — JSON first, then API fallback."""
     # Try JSON
-    jf = _find_json_file(data, "drift")
+    jf = json_path or _find_json_file(data, "drift")
     if jf:
         df = _load_json_table(jf)
         if df is not None and not df.empty:
@@ -418,9 +435,9 @@ def _extract_drift(etabs, building, data: ReportData):
         log.warning("Could not read drift data: %s", exc)
 
 
-def _extract_torsion(etabs, data: ReportData):
+def _extract_torsion(etabs, data: ReportData, json_path: Path | None = None):
     """Torsional irregularity — JSON first, then API fallback."""
-    jf = _find_json_file(data, "torsion")
+    jf = json_path or _find_json_file(data, "torsion")
     if jf:
         df = _load_json_table(jf)
         if df is not None and not df.empty:
@@ -446,11 +463,11 @@ def _extract_story_forces(etabs, data: ReportData):
         log.warning("Could not read story forces: %s", exc)
 
 
-def _extract_pmm(etabs, data: ReportData):
+def _extract_pmm(etabs, data: ReportData, json_path: Path | None = None):
     """Column PMM design results — JSON first, then API fallback."""
     # NOTE: do NOT include 'column' as keyword — it would match columns_control.json
     # which contains section names instead of PMM ratios.
-    jf = _find_json_file(data, "pmm", "design_columns")
+    jf = json_path or _find_json_file(data, "pmm", "design_columns")
     if jf:
         df = _load_json_table(jf)
         if df is not None and not df.empty:
@@ -466,11 +483,11 @@ def _extract_pmm(etabs, data: ReportData):
         log.warning("Could not read PMM data: %s", exc)
 
 
-def _extract_joint_shear(data: ReportData):
+def _extract_joint_shear(data: ReportData, json_path: Path | None = None):
     """Joint shear check — JSON only (no live API equivalent)."""
     # Require BOTH keywords in the filename to avoid accidentally picking
     # up a dynamic_scale or other table that contains only one word.
-    jf = _find_json_file_all(data, "joint", "shear")
+    jf = json_path or _find_json_file_all(data, "joint", "shear")
     if jf:
         df = _load_json_table(jf)
         if df is not None and not df.empty:
@@ -478,13 +495,14 @@ def _extract_joint_shear(data: ReportData):
             log.info("Loaded joint shear data from %s", jf.name)
 
 
-def _extract_columns_100_30(data: ReportData):
+def _extract_columns_100_30(data: ReportData, json_path: Path | None = None):
     """Load the cached 100%-30% column check table."""
     table_dir = _get_table_results_dir(data)
-    if table_dir is None:
+    result_file = json_path or (
+        table_dir / "columns_100_30.json" if table_dir is not None else None
+    )
+    if result_file is None:
         return
-
-    result_file = table_dir / "columns_100_30.json"
     if not result_file.exists():
         return
 
@@ -589,7 +607,6 @@ def _get_area_vertices(etabs, area_name: str) -> list[tuple[float, float]]:
     try:
         result = etabs.SapModel.AreaObj.GetPoints(area_name)
         # result = (NumberPoints, PointNames_tuple, ReturnCode)
-        num_pts = result[0]
         pt_names = result[1]
         vertices = []
         for pt in pt_names:
